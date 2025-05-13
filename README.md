@@ -51,6 +51,7 @@ services:
       - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
       - BACKUP_ON_START=true # 容器启动时执行一次备份
       - TZ=Asia/Shanghai # 设置容器时区
+      - RETENTION_DAYS=30 # 备份保留天数
       # 存储配置
       - STORAGE_TYPE=local # 使用本地存储
       # PostgreSQL配置
@@ -67,8 +68,7 @@ services:
       - MYSQL_USER=root
       - MYSQL_PASSWORD=secret
       - MYSQL_DATABASES=all # 备份所有数据库，或使用逗号分隔的列表
-      # 备份保留天数设置
-      - RETENTION_DAYS=30 # 备份保留天数
+      
     volumes:
       - /path/to/backup:/backup
     restart: unless-stopped
@@ -87,6 +87,7 @@ services:
       - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
       - BACKUP_ON_START=true # 容器启动时执行一次备份
       - TZ=Asia/Shanghai # 设置容器时区
+      - RETENTION_DAYS=30 # 备份保留天数
       # 存储配置
       - STORAGE_TYPE=s3 # 使用 S3 存储
       - S3_URL=https://s3.example.com # S3 端点 URL
@@ -95,7 +96,6 @@ services:
       - S3_BUCKET=database-backups # S3 存储桶名称
       - S3_REGION=us-east-1 # S3 区域
       - S3_USE_PATH_STYLE=false # 是否使用 Path Style 访问
-      - RETENTION_DAYS=30 # 备份保留天数
       - S3_KEEP_LOCAL=false # 上传后是否保留本地备份
       # PostgreSQL配置
       - ENABLE_PG=true
