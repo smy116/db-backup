@@ -41,13 +41,6 @@ log "调度时间: $CRON_SCHEDULE"
 log "PostgreSQL备份: ${ENABLE_PG:-false}"
 log "MySQL备份: ${ENABLE_MYSQL:-false}"
 log "Redis备份: ${ENABLE_REDIS:-false}"
-log "存储类型: ${STORAGE_TYPE:-local}"
-if [ "${STORAGE_TYPE:-local}" = "s3" ]; then
-  log "S3存储桶: ${S3_BUCKET:-未设置}"
-  log "S3区域: ${AWS_DEFAULT_REGION:-us-east-1}"
-  log "S3端点URL: ${AWS_ENDPOINT_URL:-标准AWS端点}"
-  log "上传后删除本地备份: ${S3_DELETE_LOCAL_AFTER_UPLOAD:-false}"
-fi
 log "---------------------------------------"
 
 # 创建日志文件

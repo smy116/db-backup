@@ -8,8 +8,7 @@
 - 使用 crontab 定期执行备份任务
 - 每种数据库类型的备份分别存储在独立目录
 - 备份文件自动压缩为 TAR.GZ 格式
-- 支持本地存储和 S3 对象存储
-- 自动清理超过 30 天的旧备份文件（本地和 S3）
+- 自动清理超过 30 天的旧备份文件
 - 通过环境变量灵活配置备份参数
 - 支持选择性启用或禁用各类数据库的备份功能
 - 支持自定义备份计划
@@ -37,8 +36,6 @@ docker run -d \
 
 ### 使用 Docker Compose
 
-#### 本地存储示例
-
 ```yaml
 version: "3"
 
@@ -50,8 +47,6 @@ services:
       - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
       - BACKUP_ON_START=true # 容器启动时执行一次备份
       - TZ=Asia/Shanghai # 设置容器时区
-      # 存储配置
-      - STORAGE_TYPE=local # 使用本地存储
       # PostgreSQL配置
       - ENABLE_PG=true
       - PG_HOST=postgres
@@ -77,53 +72,6 @@ services:
     restart: unless-stopped
 ```
 
-#### S3 存储示例
-
-```yaml
-version: "3"
-
-services:
-  db-backup:
-    image: ghcr.io/smy116/db-backup:main
-    container_name: db-backup
-    environment:
-      - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
-      - BACKUP_ON_START=true # 容器启动时执行一次备份
-      - TZ=Asia/Shanghai # 设置容器时区
-      # 存储配置
-      - STORAGE_TYPE=s3 # 使用S3存储
-      - S3_BUCKET=my-backup-bucket # S3存储桶名称
-      - AWS_ACCESS_KEY_ID=your_access_key # AWS访问密钥
-      - AWS_SECRET_ACCESS_KEY=your_secret_key # AWS秘密密钥
-      - AWS_DEFAULT_REGION=us-east-1 # AWS区域
-      - AWS_ENDPOINT_URL=https://s3.example.com # 可选，用于兼容S3的对象存储
-      - AWS_USE_PATH_STYLE=true # 使用path-style访问S3，适用于某些S3兼容服务
-      - S3_DELETE_LOCAL_AFTER_UPLOAD=false # 上传到S3后是否删除本地备份
-      # PostgreSQL配置
-      - ENABLE_PG=true
-      - PG_HOST=postgres
-      - PG_PORT=5432
-      - PG_USER=postgres
-      - PG_PASSWORD=secret
-      - PG_DATABASES=all # 备份所有数据库，或使用逗号分隔的列表
-      # MySQL配置
-      - ENABLE_MYSQL=true
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_USER=root
-      - MYSQL_PASSWORD=secret
-      - MYSQL_DATABASES=all # 备份所有数据库，或使用逗号分隔的列表
-      # Redis配置
-      - ENABLE_REDIS=true
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=secret
-      - REDIS_DB_NUMBERS=all # 备份所有数据库，或使用逗号分隔的列表
-    volumes:
-      - /path/to/backup:/backup # 本地备份目录
-    restart: unless-stopped
-```
-
 ## 环境变量
 
 ### 通用配置
@@ -133,19 +81,6 @@ services:
 | `CRON_SCHEDULE`   | Cron 表达式，定义备份执行时间    | `0 3 * * *` (每天凌晨 3 点) |
 | `BACKUP_ON_START` | 容器启动或重启时是否立即执行备份 | `false`                     |
 | `TZ`              | 容器时区设置                     | `Asia/Shanghai`             |
-
-### 存储配置
-
-| 环境变量                       | 说明                                                                                                                  | 默认值      |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `STORAGE_TYPE`                 | 存储类型，可设置为 `local` 或 `s3`                                                                                    | `local`     |
-| `S3_BUCKET`                    | S3 存储桶名称，当 `STORAGE_TYPE=s3` 时必填                                                                            | `""` (空)   |
-| `AWS_ACCESS_KEY_ID`            | AWS 访问密钥 ID，当 `STORAGE_TYPE=s3` 时必填                                                                          | `""` (空)   |
-| `AWS_SECRET_ACCESS_KEY`        | AWS 秘密访问密钥，当 `STORAGE_TYPE=s3` 时必填                                                                         | `""` (空)   |
-| `AWS_DEFAULT_REGION`           | AWS 区域                                                                                                              | `us-east-1` |
-| `AWS_ENDPOINT_URL`             | S3 兼容存储的自定义端点 URL，用于非 AWS S3 服务                                                                       | `""` (空)   |
-| `AWS_USE_PATH_STYLE`           | 是否使用 path-style 访问 S3（格式为 https://s3.amazonaws.com/BUCKET/KEY），适用于某些仅支持 path-style 的 S3 兼容服务 | `false`     |
-| `S3_DELETE_LOCAL_AFTER_UPLOAD` | 上传到 S3 后是否删除本地备份文件                                                                                      | `false`     |
 
 ### PostgreSQL 配置
 
@@ -181,19 +116,11 @@ services:
 
 ## 备份文件位置
 
-### 本地存储
-
 - PostgreSQL 备份: `/backup/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz`
 - MySQL 备份: `/backup/mysql/mysql_backup_YYYYMMDD_HHMMSS.tar.gz`
 - Redis 备份: `/backup/redis/redis_backup_YYYYMMDD_HHMMSS.tar.gz`
 
-### S3 存储
-
-- PostgreSQL 备份: `s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz`
-- MySQL 备份: `s3://<S3_BUCKET>/mysql/mysql_backup_YYYYMMDD_HHMMSS.tar.gz`
-- Redis 备份: `s3://<S3_BUCKET>/redis/redis_backup_YYYYMMDD_HHMMSS.tar.gz`
-
-所有备份文件(本地和 S3)均会自动保留 30 天，超过时间的备份将被自动删除。
+所有备份文件会自动保留 30 天，超过时间的备份将被自动删除。
 
 ## 数据库恢复
 
