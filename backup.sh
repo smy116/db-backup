@@ -44,7 +44,7 @@ EOF
   fi
   
   # 测试连接
-  s3cmd ls s3://${S3_BUCKET}
+  s3cmd ls s3://${S3_BUCKET} > /dev/null 2>&1
   if [ $? -ne 0 ]; then
     log "错误: 无法连接到S3存储，请检查配置和网络连接"
     return 1
