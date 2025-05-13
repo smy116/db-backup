@@ -1,0 +1,18 @@
+# Git
+
+.git
+.gitignore
+
+# GitHub
+
+.github
+
+# 文档
+
+\*.md
+LICENSE
+
+# 其他
+
+.dockerignore
+Dockerfile
