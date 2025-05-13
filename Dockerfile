@@ -6,9 +6,9 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 # 安装必要的软件包
 # 添加构建依赖的示例
+# 安装基础工具和客户端
 RUN apk update && \
     apk add --no-cache \
-        # 您现有的包
         postgresql-client \
         mysql-client \
         redis \
@@ -18,18 +18,22 @@ RUN apk update && \
         ca-certificates \
         bash \
         python3 \
-        py3-pip \
-        # 添加构建依赖
+        py3-pip
+
+# 安装awscli (使用Alpine软件仓库)
+RUN apk add --no-cache aws-cli || \
+    # 如果Alpine仓库中没有aws-cli包，则通过pip安装
+    (apk add --no-cache --virtual .build-deps \
         build-base \
         python3-dev \
         musl-dev \
         libffi-dev \
         openssl-dev \
         cargo \
-        # 可能还有其他 awscli 特定的需求
-    && pip3 install --no-cache-dir awscli && \
-    # 可选：pip 安装成功后删除构建依赖，以保持镜像大小
-    apk del build-base python3-dev musl-dev libffi-dev openssl-dev cargo
+        gcc \
+        && pip3 install --no-cache-dir --upgrade pip \
+        && pip3 install --no-cache-dir awscli \
+        && apk del .build-deps)
 
 # 设置默认时区
 ENV TZ="Asia/Shanghai"
