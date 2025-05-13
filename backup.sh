@@ -227,7 +227,7 @@ EOF
   # 备份所有数据库或指定数据库
   if [ "$mysql_databases" = "all" ]; then
     log "获取MySQL所有数据库列表..."
-    local db_list=$(mysql --defaults-file="$temp_dir/my.cnf" -N -e "SHOW DATABASES" | grep -v -E "^(information_schema|performance_schema|mysql|sys)$")
+    local db_list=$(mariadb --defaults-file="$temp_dir/my.cnf" -N -e "SHOW DATABASES" | grep -v -E "^(information_schema|performance_schema|mysql|sys)$")
   else
     local db_list=$(echo "$mysql_databases" | tr ',' ' ')
   fi
@@ -235,7 +235,7 @@ EOF
   # 备份每个数据库
   for db in $db_list; do
     log "备份数据库: $db"
-    mysqldump --defaults-file="$temp_dir/my.cnf" --databases "$db" --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql"
+    mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql"
     if [ $? -ne 0 ]; then
       log "备份数据库 $db 失败"
       continue
