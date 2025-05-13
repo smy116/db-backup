@@ -48,7 +48,7 @@ touch /var/log/cron.log
 
 # 启动cron服务
 log "启动cron服务..."
-cron
+crond -f &
 
 # 立即执行一次备份（如果BACKUP_ON_START为true）
 if [ "${BACKUP_ON_START:-false}" = "true" ]; then
