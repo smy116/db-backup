@@ -221,6 +221,7 @@ host=$mysql_host
 port=$mysql_port
 user=$mysql_user
 password=$mysql_password
+skip-ssl = true
 EOF
   
   # 备份所有数据库或指定数据库
