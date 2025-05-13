@@ -40,7 +40,14 @@ log "数据库备份配置信息:"
 log "调度时间: $CRON_SCHEDULE"
 log "PostgreSQL备份: ${ENABLE_PG:-false}"
 log "MySQL备份: ${ENABLE_MYSQL:-false}"
-log "Redis备份: ${ENABLE_REDIS:-false}"
+log "备份保留天数: ${RETENTION_DAYS:-30}"
+log "存储类型: ${STORAGE_TYPE:-local}"
+if [ "${STORAGE_TYPE:-local}" = "s3" ]; then
+  log "S3存储配置:"
+  log "  S3 URL: ${S3_URL:-未设置}"
+  log "  S3 Bucket: ${S3_BUCKET:-未设置}"
+  log "  使用Path Style: ${S3_USE_PATH_STYLE:-false}"
+fi
 log "---------------------------------------"
 
 # 创建日志文件

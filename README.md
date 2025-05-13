@@ -1,14 +1,16 @@
 # db-backup
 
-数据库定时备份镜像，支持 PostgreSQL、MySQL 和 Redis 数据库的定期备份。
+数据库定时备份镜像，支持 PostgreSQL、MySQL 数据库的定期备份。
 
 ## 功能特性
 
-- 支持 PostgreSQL、MySQL 和 Redis 数据库备份
+- 支持 PostgreSQL、MySQL 数据库备份
 - 使用 crontab 定期执行备份任务
 - 每种数据库类型的备份分别存储在独立目录
 - 备份文件自动压缩为 TAR.GZ 格式
-- 自动清理超过 30 天的旧备份文件
+- 支持本地存储或 S3 兼容存储
+- 自定义备份保留天数（默认 30 天，本地和 S3 通用）
+- 支持 S3 Path Style 访问方式
 - 通过环境变量灵活配置备份参数
 - 支持选择性启用或禁用各类数据库的备份功能
 - 支持自定义备份计划
@@ -36,6 +38,8 @@ docker run -d \
 
 ### 使用 Docker Compose
 
+#### 本地存储示例
+
 ```yaml
 version: "3"
 
@@ -47,6 +51,8 @@ services:
       - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
       - BACKUP_ON_START=true # 容器启动时执行一次备份
       - TZ=Asia/Shanghai # 设置容器时区
+      # 存储配置
+      - STORAGE_TYPE=local # 使用本地存储
       # PostgreSQL配置
       - ENABLE_PG=true
       - PG_HOST=postgres
@@ -61,14 +67,50 @@ services:
       - MYSQL_USER=root
       - MYSQL_PASSWORD=secret
       - MYSQL_DATABASES=all # 备份所有数据库，或使用逗号分隔的列表
-      # Redis配置
-      - ENABLE_REDIS=true
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=secret
-      - REDIS_DB_NUMBERS=all # 备份所有数据库，或使用逗号分隔的列表
+      # 备份保留天数设置
+      - RETENTION_DAYS=30 # 备份保留天数
     volumes:
       - /path/to/backup:/backup
+    restart: unless-stopped
+```
+
+#### S3 存储示例
+
+```yaml
+version: "3"
+
+services:
+  db-backup:
+    image: ghcr.io/smy116/db-backup:main
+    container_name: db-backup
+    environment:
+      - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
+      - BACKUP_ON_START=true # 容器启动时执行一次备份
+      - TZ=Asia/Shanghai # 设置容器时区
+      # 存储配置
+      - STORAGE_TYPE=s3 # 使用 S3 存储
+      - S3_URL=https://s3.example.com # S3 端点 URL
+      - S3_ACCESS_KEY=your_access_key # S3 访问密钥
+      - S3_SECRET_KEY=your_secret_key # S3 密钥
+      - S3_BUCKET=database-backups # S3 存储桶名称
+      - S3_REGION=us-east-1 # S3 区域
+      - S3_USE_PATH_STYLE=false # 是否使用 Path Style 访问
+      - RETENTION_DAYS=30 # 备份保留天数
+      - S3_KEEP_LOCAL=false # 上传后是否保留本地备份
+      # PostgreSQL配置
+      - ENABLE_PG=true
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=secret
+      # MySQL配置
+      - ENABLE_MYSQL=true
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=secret
+    volumes:
+      - /path/to/backup:/backup # 本地备份目录（如果保留本地备份）
     restart: unless-stopped
 ```
 
@@ -81,6 +123,20 @@ services:
 | `CRON_SCHEDULE`   | Cron 表达式，定义备份执行时间    | `0 3 * * *` (每天凌晨 3 点) |
 | `BACKUP_ON_START` | 容器启动或重启时是否立即执行备份 | `false`                     |
 | `TZ`              | 容器时区设置                     | `Asia/Shanghai`             |
+| `RETENTION_DAYS`  | 备份保留天数                     | `30`                        |
+
+### 存储配置
+
+| 环境变量            | 说明                                 | 默认值      |
+| ------------------- | ------------------------------------ | ----------- |
+| `STORAGE_TYPE`      | 存储类型，可选值为 `local` 或 `s3`   | `local`     |
+| `S3_URL`            | S3 端点 URL (仅当 STORAGE_TYPE=s3)   | `""`        |
+| `S3_ACCESS_KEY`     | S3 访问密钥 (仅当 STORAGE_TYPE=s3)   | `""`        |
+| `S3_SECRET_KEY`     | S3 密钥 (仅当 STORAGE_TYPE=s3)       | `""`        |
+| `S3_BUCKET`         | S3 存储桶名称 (仅当 STORAGE_TYPE=s3) | `""`        |
+| `S3_REGION`         | S3 区域 (仅当 STORAGE_TYPE=s3)       | `us-east-1` |
+| `S3_USE_PATH_STYLE` | 是否使用 Path Style 访问             | `false`     |
+| `S3_KEEP_LOCAL`     | 上传到 S3 后是否保留本地备份文件     | `false`     |
 
 ### PostgreSQL 配置
 
@@ -104,23 +160,19 @@ services:
 | `MYSQL_PASSWORD`  | MySQL 密码                                                  | `""` (空)   |
 | `MYSQL_DATABASES` | 要备份的数据库列表，使用逗号分隔，或设为`all`备份所有数据库 | `all`       |
 
-### Redis 配置
-
-| 环境变量           | 说明                                                                   | 默认值      |
-| ------------------ | ---------------------------------------------------------------------- | ----------- |
-| `ENABLE_REDIS`     | 是否启用 Redis 备份                                                    | `false`     |
-| `REDIS_HOST`       | Redis 服务器地址                                                       | `localhost` |
-| `REDIS_PORT`       | Redis 服务器端口                                                       | `6379`      |
-| `REDIS_PASSWORD`   | Redis 密码                                                             | `""` (空)   |
-| `REDIS_DB_NUMBERS` | 要备份的 Redis 数据库编号列表，使用逗号分隔，或设为`all`备份所有数据库 | `all`       |
-
 ## 备份文件位置
+
+### 本地存储 (STORAGE_TYPE=local)
 
 - PostgreSQL 备份: `/backup/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz`
 - MySQL 备份: `/backup/mysql/mysql_backup_YYYYMMDD_HHMMSS.tar.gz`
-- Redis 备份: `/backup/redis/redis_backup_YYYYMMDD_HHMMSS.tar.gz`
 
-所有备份文件会自动保留 30 天，超过时间的备份将被自动删除。
+### S3 存储 (STORAGE_TYPE=s3)
+
+- PostgreSQL 备份: `s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz`
+- MySQL 备份: `s3://<S3_BUCKET>/mysql/mysql_backup_YYYYMMDD_HHMMSS.tar.gz`
+
+所有备份文件（无论本地还是 S3）都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。
 
 ## 数据库恢复
 
@@ -202,41 +254,6 @@ sed -n '[start_line],[end_line]p' /tmp/restore/[database_name].sql > /tmp/table_
 mysql -h [host] -P [port] -u [username] -p [database_name] < /tmp/table_backup.sql
 ```
 
-### Redis 恢复
-
-Redis 备份文件为 `.rdb` 格式，需要停止 Redis 服务并替换 RDB 文件：
-
-```bash
-# 列出备份中包含的数据库文件
-ls -la /tmp/restore
-
-# 方法 1: 直接使用 redis-cli 恢复特定数据库（适用于小型数据库）
-cat /tmp/restore/dump_[db_number].rdb | redis-cli -h [host] -p [port] -a [password] --pipe
-
-# 方法 2: 替换 Redis RDB 文件（推荐方式，适用于所有规模数据库）
-# 1. 停止 Redis 服务
-sudo systemctl stop redis-server  # 或者 redis-server, 取决于安装方式
-
-# 2. 备份当前 RDB 文件（如果有的话）
-sudo cp /var/lib/redis/dump.rdb /var/lib/redis/dump.rdb.bak  # 实际路径可能不同
-
-# 3. 复制恢复文件到 Redis 数据目录
-# 如果只有一个数据库需要恢复
-sudo cp /tmp/restore/dump_[db_number].rdb /var/lib/redis/dump.rdb
-
-# 4. 调整权限
-sudo chown redis:redis /var/lib/redis/dump.rdb
-
-# 5. 启动 Redis 服务
-sudo systemctl start redis-server  # 或者 redis-server
-```
-
-注意事项：
-
-- Redis RDB 文件路径可能因安装方式而异，常见路径有 `/var/lib/redis/dump.rdb`、`/etc/redis/dump.rdb` 等
-- Docker 环境中路径可能为容器内的 `/data/dump.rdb`
-- 恢复前请确认 Redis 配置中的 `dir` 参数，这是 RDB 文件的存储位置
-
 ### 清理
 
 完成数据库恢复操作后，请删除临时目录：
@@ -244,6 +261,34 @@ sudo systemctl start redis-server  # 或者 redis-server
 ```bash
 rm -rf /tmp/restore
 ```
+
+## 使用 S3 存储的注意事项
+
+1. **S3 兼容性**: 本工具支持 AWS S3 和其他兼容 S3 API 的对象存储服务，如 MinIO、阿里云 OSS、腾讯云 COS 等。
+
+2. **Path Style vs Virtual-Hosted Style**:
+
+   - Path Style 格式: `https://s3.example.com/bucket-name/object-key`
+   - Virtual-Hosted Style 格式: `https://bucket-name.s3.example.com/object-key`
+   - 使用 `S3_USE_PATH_STYLE=true` 开启 Path Style 访问方式
+
+3. **权限配置**: S3 用户需要具有以下权限:
+
+   - `s3:PutObject`: 上传备份文件
+   - `s3:ListBucket`: 列出桶中的文件
+   - `s3:DeleteObject`: 删除过期备份文件
+
+4. **读取备份文件**: 可以使用以下方式从 S3 下载备份文件:
+
+   ```bash
+   # 使用 s3cmd 下载
+   s3cmd get s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz /path/to/local/file.tar.gz
+
+   # 使用 AWS CLI
+   aws s3 cp s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz /path/to/local/file.tar.gz
+   ```
+
+5. **排障**: 如果 S3 配置错误，脚本会自动回退到本地存储方式，并在日志中记录错误信息。
 
 ## 许可证
 

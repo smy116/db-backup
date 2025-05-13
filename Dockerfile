@@ -8,12 +8,13 @@ LABEL org.opencontainers.image.licenses="MIT"
 RUN apk update && apk add --no-cache \
     postgresql-client \
     mysql-client \
-    redis \
     tar \
     tzdata \
     dcron \
     ca-certificates \
-    bash
+    bash \
+    s3cmd \
+    py3-pip
 
 # 设置默认时区
 ENV TZ="Asia/Shanghai"
@@ -26,7 +27,7 @@ ENV LANGUAGE=zh_CN:zh
 ENV LC_ALL=zh_CN.UTF-8
 
 # 创建应用目录和备份目录
-RUN mkdir -p /app /backup /backup/pg /backup/mysql /backup/redis
+RUN mkdir -p /app /backup /backup/pg /backup/mysql
 
 # 拷贝脚本
 COPY backup.sh /app/
@@ -39,8 +40,10 @@ RUN chmod +x /app/backup.sh /app/entrypoint.sh
 ENV CRON_SCHEDULE="0 3 * * *"
 ENV ENABLE_PG="false"
 ENV ENABLE_MYSQL="false"
-ENV ENABLE_REDIS="false"
 ENV BACKUP_ON_START="false"
+ENV STORAGE_TYPE="local"
+ENV S3_USE_PATH_STYLE="false"
+ENV RETENTION_DAYS="30"
 
 # 持久化备份目录
 VOLUME ["/backup"]
