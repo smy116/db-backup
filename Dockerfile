@@ -13,7 +13,10 @@ RUN apk update && apk add --no-cache \
     tzdata \
     dcron \
     ca-certificates \
-    bash
+    bash \
+    python3 \
+    py3-pip \
+    && pip3 install --no-cache-dir awscli
 
 # 设置默认时区
 ENV TZ="Asia/Shanghai"
@@ -41,6 +44,16 @@ ENV ENABLE_PG="false"
 ENV ENABLE_MYSQL="false"
 ENV ENABLE_REDIS="false"
 ENV BACKUP_ON_START="false"
+
+# S3存储相关环境变量
+ENV STORAGE_TYPE="local"
+ENV S3_BUCKET=""
+ENV AWS_ACCESS_KEY_ID=""
+ENV AWS_SECRET_ACCESS_KEY=""
+ENV AWS_DEFAULT_REGION="us-east-1"
+ENV AWS_ENDPOINT_URL=""
+ENV AWS_USE_PATH_STYLE="false"
+ENV S3_DELETE_LOCAL_AFTER_UPLOAD="false"
 
 # 持久化备份目录
 VOLUME ["/backup"]
