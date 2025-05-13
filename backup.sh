@@ -21,6 +21,11 @@ check_s3_config() {
     log "错误: S3配置不完整，请检查S3_URL, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY环境变量"
     return 1
   fi
+
+  local use_https_value="No"
+  if [[ "${S3_URL}" == https://* ]]; then
+    use_https_value="Yes"
+  fi
   
   # 创建s3cmd配置文件
   mkdir -p ~/.s3cmd
@@ -31,7 +36,7 @@ secret_key = ${S3_SECRET_KEY}
 host_base = ${S3_URL#*//}
 host_bucket = ${S3_BUCKET}.${S3_URL#*//}
 bucket_location = ${S3_REGION}
-use_https = ${S3_URL#*:}
+use_https = ${use_https_value}
 EOF
 
   if [ "$S3_USE_PATH_STYLE" = "true" ]; then
