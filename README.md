@@ -95,7 +95,7 @@ services:
       - S3_BUCKET=my-backup-bucket # S3存储桶名称
       - AWS_ACCESS_KEY_ID=your_access_key # AWS访问密钥
       - AWS_SECRET_ACCESS_KEY=your_secret_key # AWS秘密密钥
-      - AWS_DEFAULT_REGION=ap-northeast-1 # AWS区域
+      - AWS_DEFAULT_REGION=us-east-1 # AWS区域
       - AWS_ENDPOINT_URL=https://s3.example.com # 可选，用于兼容S3的对象存储
       - AWS_USE_PATH_STYLE=true # 使用path-style访问S3，适用于某些S3兼容服务
       - S3_DELETE_LOCAL_AFTER_UPLOAD=false # 上传到S3后是否删除本地备份
