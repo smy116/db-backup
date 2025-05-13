@@ -5,18 +5,31 @@ LABEL org.opencontainers.image.description="数据库定时备份容器，支持
 LABEL org.opencontainers.image.licenses="MIT"
 
 # 安装必要的软件包
-RUN apk update && apk add --no-cache \
-    postgresql-client \
-    mysql-client \
-    redis \
-    tar \
-    tzdata \
-    dcron \
-    ca-certificates \
-    bash \
-    python3 \
-    py3-pip \
-    && pip3 install --no-cache-dir awscli
+# 添加构建依赖的示例
+RUN apk update && \
+    apk add --no-cache \
+        # 您现有的包
+        postgresql-client \
+        mysql-client \
+        redis \
+        tar \
+        tzdata \
+        dcron \
+        ca-certificates \
+        bash \
+        python3 \
+        py3-pip \
+        # 添加构建依赖
+        build-base \
+        python3-dev \
+        musl-dev \
+        libffi-dev \
+        openssl-dev \
+        cargo \
+        # 可能还有其他 awscli 特定的需求
+    && pip3 install --no-cache-dir awscli && \
+    # 可选：pip 安装成功后删除构建依赖，以保持镜像大小
+    apk del build-base python3-dev musl-dev libffi-dev openssl-dev cargo
 
 # 设置默认时区
 ENV TZ="Asia/Shanghai"
