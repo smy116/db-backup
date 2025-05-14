@@ -286,13 +286,13 @@ EOF
       log "使用MariaDB 11参数备份失败，尝试兼容模式..."
       # 回退使用基本参数
       mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
-        --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql" 2>/dev/null
+        --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql"
       
       if [ $? -ne 0 ]; then
         log "备份数据库 $db 失败，尝试使用mysql-dump命令..."
         # 尝试使用mysql-dump命令（MySQL兼容模式）
         mysqldump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
-          --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql" 2>/dev/null
+          --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql"
         
         if [ $? -ne 0 ]; then
           log "备份数据库 $db 失败"

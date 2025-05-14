@@ -46,6 +46,7 @@ ENV BACKUP_ON_START="false"
 ENV STORAGE_TYPE="local"
 ENV S3_USE_PATH_STYLE="false"
 ENV RETENTION_DAYS="30"
+ENV ENABLE_ENCRYPTION="false"
 
 # 持久化备份目录
 VOLUME ["/backup"]
