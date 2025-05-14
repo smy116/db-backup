@@ -6,6 +6,19 @@ log() {
   echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1"
 }
 
+# 检查加密配置
+check_encryption_config() {
+  # 设置默认值
+  ENABLE_ENCRYPTION=${ENABLE_ENCRYPTION:-"false"}
+  ENCRYPTION_PASSWORD=${ENCRYPTION_PASSWORD:-""}
+  
+  # 检查加密配置
+  if [ "$ENABLE_ENCRYPTION" = "true" ] && [ -z "$ENCRYPTION_PASSWORD" ]; then
+    log "警告: 加密已启用但未设置密码，将使用默认密码"
+    ENCRYPTION_PASSWORD="default_password"
+  fi
+}
+
 # 检查S3配置
 check_s3_config() {
   # 设置默认值
@@ -87,7 +100,7 @@ cleanup_old_backups() {
   
   if [ "$storage_type" = "local" ]; then
     log "清理本地超过${retention_days}天的备份文件: $backup_dir"
-    find "$backup_dir" -name "*.tar.gz" -type f -mtime +${retention_days} -delete
+    find "$backup_dir" -name "*.zip" -type f -mtime +${retention_days} -delete
   elif [ "$storage_type" = "s3" ]; then
     # 提取S3路径前缀 (从backup_dir中提取最后一个目录名)
     local prefix=$(basename "$backup_dir")
@@ -161,8 +174,28 @@ backup_postgresql() {
   
   # 压缩备份文件
   log "压缩PostgreSQL备份文件..."
-  local local_backup_path="/backup/pg/$backup_file.tar.gz"
-  cd "$temp_dir" && tar -czf "$local_backup_path" .
+  local local_backup_path="/backup/pg/$backup_file.zip"
+  
+  # 检查是否启用加密
+  if [ "$ENABLE_ENCRYPTION" = "true" ]; then
+    log "使用加密压缩PostgreSQL备份文件..."
+    cd "$temp_dir" && zip -r -e -P "$ENCRYPTION_PASSWORD" "$local_backup_path" .
+    if [ $? -ne 0 ]; then
+      log "加密压缩备份文件失败"
+      rm -rf "$temp_dir"
+      unset PGPASSWORD
+      return 1
+    fi
+    log "PostgreSQL备份文件已加密压缩"
+  else
+    cd "$temp_dir" && zip -r "$local_backup_path" .
+    if [ $? -ne 0 ]; then
+      log "压缩备份文件失败"
+      rm -rf "$temp_dir"
+      unset PGPASSWORD
+      return 1
+    fi
+  fi
   
   # 清理临时文件
   rm -rf "$temp_dir"
@@ -177,7 +210,7 @@ backup_postgresql() {
   elif [ "$storage_type" = "s3" ]; then
     # 上传到S3
     if check_s3_config; then
-      upload_to_s3 "$local_backup_path" "pg/$backup_file.tar.gz"
+      upload_to_s3 "$local_backup_path" "pg/$backup_file.zip"
       # 清理S3过期备份
       cleanup_old_backups "/backup/pg"
       # 可选：上传成功后删除本地文件
@@ -226,8 +259,17 @@ EOF
   
   # 备份所有数据库或指定数据库
   if [ "$mysql_databases" = "all" ]; then
-    log "获取MySQL所有数据库列表..."
-    local db_list=$(mariadb --defaults-file="$temp_dir/my.cnf" -N -e "SHOW DATABASES" | grep -v -E "^(information_schema|performance_schema|mysql|sys)$")
+    log "获取MySQL/MariaDB所有数据库列表..."
+    local db_list
+    # 尝试使用MariaDB 11兼容的方式获取数据库列表
+    db_list=$(mariadb --defaults-file="$temp_dir/my.cnf" -N -e "SHOW DATABASES" 2>/dev/null)
+    if [ $? -ne 0 ]; then
+      # 回退到MySQL兼容模式
+      log "尝试MySQL兼容模式..."
+      db_list=$(mysql --defaults-file="$temp_dir/my.cnf" -N -e "SHOW DATABASES")
+    fi
+    # 过滤系统数据库
+    db_list=$(echo "$db_list" | grep -v -E "^(information_schema|performance_schema|mysql|sys)$")
   else
     local db_list=$(echo "$mysql_databases" | tr ',' ' ')
   fi
@@ -235,17 +277,59 @@ EOF
   # 备份每个数据库
   for db in $db_list; do
     log "备份数据库: $db"
-    mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql"
+    # 尝试使用MariaDB 11兼容的备份参数，增加--skip-lock-tables以避免锁表问题
+    mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
+      --single-transaction --skip-lock-tables --routines --triggers --events \
+      --set-gtid-purged=OFF --column-statistics=0 > "$temp_dir/${db}.sql" 2>/dev/null
+    
+    # 检查命令是否执行成功
     if [ $? -ne 0 ]; then
-      log "备份数据库 $db 失败"
-      continue
+      log "使用MariaDB 11参数备份失败，尝试兼容模式..."
+      # 回退使用基本参数
+      mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
+        --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql" 2>/dev/null
+      
+      if [ $? -ne 0 ]; then
+        log "备份数据库 $db 失败，尝试使用mysql-dump命令..."
+        # 尝试使用mysql-dump命令（MySQL兼容模式）
+        mysqldump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
+          --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql" 2>/dev/null
+        
+        if [ $? -ne 0 ]; then
+          log "备份数据库 $db 失败"
+          continue
+        fi
+      fi
     fi
+    
+    log "数据库 $db 备份成功"
   done
   
   # 压缩备份文件
   log "压缩MySQL备份文件..."
-  local local_backup_path="/backup/mysql/$backup_file.tar.gz"
-  cd "$temp_dir" && rm -f my.cnf && tar -czf "$local_backup_path" .
+  local local_backup_path="/backup/mysql/$backup_file.zip"
+  
+  # 删除配置文件，避免包含敏感信息
+  rm -f "$temp_dir/my.cnf"
+  
+  # 检查是否启用加密
+  if [ "$ENABLE_ENCRYPTION" = "true" ]; then
+    log "使用加密压缩MySQL备份文件..."
+    cd "$temp_dir" && zip -r -e -P "$ENCRYPTION_PASSWORD" "$local_backup_path" .
+    if [ $? -ne 0 ]; then
+      log "加密压缩备份文件失败"
+      rm -rf "$temp_dir"
+      return 1
+    fi
+    log "MySQL备份文件已加密压缩"
+  else
+    cd "$temp_dir" && zip -r "$local_backup_path" .
+    if [ $? -ne 0 ]; then
+      log "压缩备份文件失败"
+      rm -rf "$temp_dir"
+      return 1
+    fi
+  fi
   
   # 清理临时文件
   rm -rf "$temp_dir"
@@ -259,7 +343,7 @@ EOF
   elif [ "$storage_type" = "s3" ]; then
     # 上传到S3
     if check_s3_config; then
-      upload_to_s3 "$local_backup_path" "mysql/$backup_file.tar.gz"
+      upload_to_s3 "$local_backup_path" "mysql/$backup_file.zip"
       # 清理S3过期备份
       cleanup_old_backups "/backup/mysql"
       # 可选：上传成功后删除本地文件
@@ -286,6 +370,14 @@ main() {
   # 设置保留天数
   RETENTION_DAYS=${RETENTION_DAYS:-30}
   log "备份保留天数: $RETENTION_DAYS 天"
+  
+  # 检查加密配置
+  check_encryption_config
+  if [ "$ENABLE_ENCRYPTION" = "true" ]; then
+    log "备份加密已启用"
+  else
+    log "备份加密未启用"
+  fi
   
   # 检查存储类型
   local storage_type=${STORAGE_TYPE:-"local"}

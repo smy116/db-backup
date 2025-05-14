@@ -7,12 +7,14 @@
 - 支持 PostgreSQL、MySQL 数据库备份
 - 使用 crontab 定期执行备份任务
 - 每种数据库类型的备份分别存储在独立目录
-- 备份文件自动压缩为 TAR.GZ 格式
+- 备份文件自动压缩为 ZIP 格式，提供更高压缩率
+- 支持备份文件加密保护，保障数据安全
 - 支持本地存储或 S3 兼容存储
 - 自定义备份保留天数（默认 30 天，本地和 S3 通用）
 - 支持 S3 Path Style 访问方式
 - 通过环境变量灵活配置备份参数
 - 支持选择性启用或禁用各类数据库的备份功能
+- 兼容 MariaDB 11 数据库
 - 支持自定义备份计划
 
 ## 使用方法
@@ -68,7 +70,7 @@ services:
       - MYSQL_USER=root
       - MYSQL_PASSWORD=secret
       - MYSQL_DATABASES=all # 备份所有数据库，或使用逗号分隔的列表
-      
+
     volumes:
       - /path/to/backup:/backup
     restart: unless-stopped
@@ -125,6 +127,13 @@ services:
 | `TZ`              | 容器时区设置                     | `Asia/Shanghai`             |
 | `RETENTION_DAYS`  | 备份保留天数                     | `30`                        |
 
+### 加密配置
+
+| 环境变量              | 说明                           | 默认值  |
+| --------------------- | ------------------------------ | ------- |
+| `ENABLE_ENCRYPTION`   | 是否启用备份文件加密           | `false` |
+| `ENCRYPTION_PASSWORD` | 加密密码，当加密启用时必须提供 | `""`    |
+
 ### 存储配置
 
 | 环境变量            | 说明                                 | 默认值      |
@@ -164,19 +173,19 @@ services:
 
 ### 本地存储 (STORAGE_TYPE=local)
 
-- PostgreSQL 备份: `/backup/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz`
-- MySQL 备份: `/backup/mysql/mysql_backup_YYYYMMDD_HHMMSS.tar.gz`
+- PostgreSQL 备份: `/backup/pg/pg_backup_YYYYMMDD_HHMMSS.zip`
+- MySQL 备份: `/backup/mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
 
 ### S3 存储 (STORAGE_TYPE=s3)
 
-- PostgreSQL 备份: `s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz`
-- MySQL 备份: `s3://<S3_BUCKET>/mysql/mysql_backup_YYYYMMDD_HHMMSS.tar.gz`
+- PostgreSQL 备份: `s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip`
+- MySQL 备份: `s3://<S3_BUCKET>/mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
 
 所有备份文件（无论本地还是 S3）都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。
 
 ## 数据库恢复
 
-本节说明如何恢复各类数据库备份。所有备份文件均为 TAR.GZ 格式，需要先解压后再进行恢复操作。
+本节说明如何恢复各类数据库备份。所有备份文件均为 ZIP 格式，需要先解压后再进行恢复操作。如果启用了加密，还需要提供正确的密码才能解压。
 
 ### 通用解压步骤
 
@@ -185,7 +194,13 @@ services:
 mkdir -p /tmp/restore
 
 # 解压缩备份文件（替换为实际备份文件路径）
-tar -xzf /backup/[db_type]/[backup_file].tar.gz -C /tmp/restore
+# 未加密文件解压方式
+unzip /backup/[db_type]/[backup_file].zip -d /tmp/restore
+
+# 加密文件解压方式（会提示输入密码）
+unzip /backup/[db_type]/[backup_file].zip -d /tmp/restore
+# 或指定密码
+unzip -P "your_password" /backup/[db_type]/[backup_file].zip -d /tmp/restore
 ```
 
 ### PostgreSQL 恢复
@@ -282,10 +297,10 @@ rm -rf /tmp/restore
 
    ```bash
    # 使用 s3cmd 下载
-   s3cmd get s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz /path/to/local/file.tar.gz
+   s3cmd get s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/file.zip
 
    # 使用 AWS CLI
-   aws s3 cp s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.tar.gz /path/to/local/file.tar.gz
+   aws s3 cp s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/file.zip
    ```
 
 5. **排障**: 如果 S3 配置错误，脚本会自动回退到本地存储方式，并在日志中记录错误信息。

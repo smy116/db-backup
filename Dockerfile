@@ -9,6 +9,8 @@ RUN apk update && apk add --no-cache \
     postgresql-client \
     mysql-client \
     tar \
+    zip \
+    unzip \
     tzdata \
     dcron \
     ca-certificates \
