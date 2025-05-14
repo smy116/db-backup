@@ -35,7 +35,7 @@ docker run -d \
   -e PG_HOST=pg-server \
   -e PG_USER=postgres \
   -e PG_PASSWORD=secret \
-  ghcr.io/smy116/db-backup:main
+  ghcr.io/smy116/db-backup:latest
 ```
 
 ### 使用 Docker Compose
@@ -47,7 +47,7 @@ version: "3"
 
 services:
   db-backup:
-    image: ghcr.io/smy116/db-backup:main
+    image: ghcr.io/smy116/db-backup:latest
     container_name: db-backup
     environment:
       - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
@@ -83,7 +83,7 @@ version: "3"
 
 services:
   db-backup:
-    image: ghcr.io/smy116/db-backup:main
+    image: ghcr.io/smy116/db-backup:latest
     container_name: db-backup
     environment:
       - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
