@@ -280,7 +280,7 @@ EOF
     # 尝试使用MariaDB 11兼容的备份参数，增加--skip-lock-tables以避免锁表问题
     mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
       --single-transaction --skip-lock-tables --routines --triggers --events \
-      --set-gtid-purged=OFF --column-statistics=0 > "$temp_dir/${db}.sql" 2>/dev/null
+      --set-gtid-purged=OFF --column-statistics=0 > "$temp_dir/${db}.sql"
     
     # 检查命令是否执行成功
     if [ $? -ne 0 ]; then
