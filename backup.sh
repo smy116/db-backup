@@ -57,7 +57,7 @@ EOF
   fi
   
   # 测试连接
-  s3cmd ls s3://${S3_BUCKET} > /dev/null 2>&1
+  s3cmd --no-check-certificate ls s3://${S3_BUCKET} > /dev/null 2>&1
   if [ $? -ne 0 ]; then
     log "错误: 无法连接到S3存储，请检查配置和网络连接"
     return 1
@@ -82,7 +82,7 @@ upload_to_s3() {
   local s3_path=$2
   
   log "上传文件到S3: $local_file -> s3://${S3_BUCKET}/${s3_path}"
-  s3cmd put "$local_file" "s3://${S3_BUCKET}/${s3_path}"
+  s3cmd --no-check-certificate put "$local_file" "s3://${S3_BUCKET}/${s3_path}"
   if [ $? -ne 0 ]; then
     log "上传文件到S3失败: $local_file"
     return 1
@@ -112,7 +112,7 @@ cleanup_old_backups() {
     local cutoff=$((now - retention_days * 24 * 60 * 60))
     
     # 获取所有S3文件列表并进行过滤
-    s3cmd ls "s3://${S3_BUCKET}/${prefix}/" | while read -r line; do
+    s3cmd --no-check-certificate ls "s3://${S3_BUCKET}/${prefix}/" | while read -r line; do
       # 提取日期和文件名
       # 格式通常是: YYYY-MM-DD HH:MM file_size s3://bucket/path
       if [[ $line =~ ([0-9]{4}-[0-9]{2}-[0-9]{2})\ ([0-9]{2}:[0-9]{2})\ +([0-9]+)\ (s3://.*) ]]; then
@@ -123,7 +123,7 @@ cleanup_old_backups() {
         local file_timestamp=$(date -d "$file_date" +%s 2>/dev/null)
         if [ $? -eq 0 ] && [ $file_timestamp -lt $cutoff ]; then
           log "删除过期S3备份: $file_path"
-          s3cmd rm "$file_path"
+          s3cmd --no-check-certificate rm "$file_path"
         fi
       fi
     done
