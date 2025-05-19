@@ -41,44 +41,6 @@ docker run -d \
 
 ### 使用 Docker Compose
 
-#### 本地存储示例
-
-```yaml
-version: "3"
-
-services:
-  db-backup:
-    image: ghcr.io/smy116/db-backup:latest
-    container_name: db-backup
-    environment:
-      - CRON_SCHEDULE=0 3 * * * # 每天凌晨3点执行
-      - BACKUP_ON_START=true # 容器启动时执行一次备份
-      - TZ=Asia/Shanghai # 设置容器时区
-      - RETENTION_DAYS=30 # 备份保留天数
-      # 存储配置
-      - KEEP_LOCAL=true # 是否保留本地备份
-      # PostgreSQL配置
-      - ENABLE_PG=true
-      - PG_HOST=postgres
-      - PG_PORT=5432
-      - PG_USER=postgres
-      - PG_PASSWORD=secret
-      - PG_DATABASES=all # 备份所有数据库，或使用逗号分隔的列表
-      # MySQL配置
-      - ENABLE_MYSQL=true
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_USER=root
-      - MYSQL_PASSWORD=secret
-      - MYSQL_DATABASES=all # 备份所有数据库，或使用逗号分隔的列表
-
-    volumes:
-      - /path/to/backup:/backup
-    restart: unless-stopped
-```
-
-#### 自定义 rclone 配置示例
-
 ```yaml
 version: "3"
 
@@ -174,39 +136,19 @@ remote = /backup
 ### S3 兼容存储 (AWS S3, MinIO 等)
 
 ```
-[backup]
+[s3]
 type = s3
 provider = AWS
 access_key_id = your_access_key
 secret_access_key = your_secret_key
 region = us-east-1
-endpoint = https://s3.amazonaws.com
+endpoint = https://s3.example.com
 # 如需使用Path Style，添加以下行
 # force_path_style = true
-```
 
-### 阿里云 OSS
-
-```
 [backup]
-type = s3
-provider = Alibaba
-access_key_id = your_access_key
-secret_access_key = your_secret_key
-endpoint = https://oss-cn-hangzhou.aliyuncs.com
-force_path_style = false
-```
-
-### 腾讯云 COS
-
-```
-[backup]
-type = s3
-provider = TencentCOS
-access_key_id = your_access_key
-secret_access_key = your_secret_key
-endpoint = https://cos.ap-guangzhou.myqcloud.com
-force_path_style = false
+type = alias
+remote = s3:backup
 ```
 
 ### WebDAV 存储
@@ -245,32 +187,7 @@ pass = your_password
 # key_file = /path/to/private_key
 ```
 
-### Dropbox
-
-```
-[backup]
-type = dropbox
-token = {"access_token":"xxx","token_type":"bearer","refresh_token":"xxx","expiry":"xxx"}
-```
-
-### Google Drive
-
-```
-[backup]
-type = drive
-client_id = your_client_id
-client_secret = your_client_secret
-token = {"access_token":"xxx","token_type":"Bearer","refresh_token":"xxx","expiry":"xxx"}
-```
-
 ## 备份文件位置
-
-### 本地备份
-
-- PostgreSQL 备份: `/backup/pg/pg_backup_YYYYMMDD_HHMMSS.zip`
-- MySQL 备份: `/backup/mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
-
-### 远程备份
 
 - PostgreSQL 备份: `backup:pg/pg_backup_YYYYMMDD_HHMMSS.zip`
 - MySQL 备份: `backup:mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
