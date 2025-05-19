@@ -115,6 +115,7 @@ backup_postgresql() {
   
   # 创建临时和备份目录
   check_backup_dir "/backup/pg"
+  
   local temp_dir=$(mktemp -d)
   local date_suffix=$(date +"%Y%m%d_%H%M%S")
   local backup_file="pg_backup_$date_suffix"
@@ -315,8 +316,9 @@ EOF
 main() {
   log "数据库备份开始执行..."
   
-  # 确保备份主目录存在
+  # 确保备份目录存在
   check_backup_dir "/backup"
+  check_backup_dir "/backup/temp"
   
   # 设置保留天数
   RETENTION_DAYS=${RETENTION_DAYS:-30}
