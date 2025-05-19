@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+CRON_SCHEDULE=${CRON_SCHEDULE:-"0 3 * * *"}
+
 # 日志函数
 log() {
   echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1"
@@ -15,16 +17,13 @@ set_timezone() {
   fi
 }
 
-# 默认的cron表达式（每天凌晨3点执行）
-DEFAULT_CRON_SCHEDULE="0 3 * * *"
 
 # 设置时区
 set_timezone
 
 log "配置数据库备份定时任务..."
 
-# 获取cron调度表达式（或使用默认值）
-CRON_SCHEDULE=${CRON_SCHEDULE:-$DEFAULT_CRON_SCHEDULE}
+
 
 # 确保脚本可执行
 chmod +x /app/backup.sh
