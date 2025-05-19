@@ -11,6 +11,8 @@
 - 支持备份文件加密保护，保障数据安全
 - 支持本地存储或 S3 兼容存储
 - 自定义备份保留天数（默认 30 天，本地和 S3 通用）
+- 使用 rclone 统一管理本地和远程存储
+- 基于文件创建时间清理旧备份，更加智能和可靠
 - 支持 S3 Path Style 访问方式
 - 通过环境变量灵活配置备份参数
 - 支持选择性启用或禁用各类数据库的备份功能
@@ -147,6 +149,8 @@ services:
 | `S3_USE_PATH_STYLE` | 是否使用 Path Style 访问             | `false`     |
 | `S3_KEEP_LOCAL`     | 上传到 S3 后是否保留本地备份文件     | `false`     |
 
+**备注**：本项目使用 rclone 来管理本地和 S3 远程存储，相比于 s3cmd，rclone 提供了更加统一的文件管理接口和更智能的文件过期清理机制。
+
 ### PostgreSQL 配置
 
 | 环境变量       | 说明                                                        | 默认值      |
@@ -181,7 +185,7 @@ services:
 - PostgreSQL 备份: `s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip`
 - MySQL 备份: `s3://<S3_BUCKET>/mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
 
-所有备份文件（无论本地还是 S3）都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。
+所有备份文件（无论本地还是 S3）都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。本地备份通过 `find` 命令根据文件修改时间删除，远程备份通过 rclone 的 `max-age` 功能根据文件创建时间清理。
 
 ## 数据库恢复
 
@@ -279,7 +283,7 @@ rm -rf /tmp/restore
 
 ## 使用 S3 存储的注意事项
 
-1. **S3 兼容性**: 本工具支持 AWS S3 和其他兼容 S3 API 的对象存储服务，如 MinIO、阿里云 OSS、腾讯云 COS 等。
+1. **S3 兼容性**: 本工具使用 rclone 支持 AWS S3 和其他兼容 S3 API 的对象存储服务，如 MinIO、阿里云 OSS、腾讯云 COS 等。
 
 2. **Path Style vs Virtual-Hosted Style**:
 
@@ -293,17 +297,19 @@ rm -rf /tmp/restore
    - `s3:ListBucket`: 列出桶中的文件
    - `s3:DeleteObject`: 删除过期备份文件
 
-4. **读取备份文件**: 可以使用以下方式从 S3 下载备份文件:
+4. **基于时间的清理**: 本项目使用 rclone 的 `--min-age` 过滤功能，根据文件的创建时间清理旧的备份，确保准确保留指定天数的备份，而不依赖于文件名匹配。
+
+5. **读取备份文件**: 可以使用以下方式从 S3 下载备份文件:
 
    ```bash
-   # 使用 s3cmd 下载
-   s3cmd get s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/file.zip
+   # 使用 rclone 下载
+   rclone copy s3:<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/directory/
 
    # 使用 AWS CLI
    aws s3 cp s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/file.zip
    ```
 
-5. **排障**: 如果 S3 配置错误，脚本会自动回退到本地存储方式，并在日志中记录错误信息。
+6. **排障**: 如果 S3 配置错误，脚本会自动回退到本地存储方式，并在日志中记录错误信息。
 
 ## 许可证
 

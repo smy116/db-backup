@@ -1,22 +1,21 @@
 FROM alpine:latest
 
-LABEL org.opencontainers.image.source=https://github.com/owner/db-backup
-LABEL org.opencontainers.image.description="数据库定时备份容器，支持PostgreSQL、MySQL和Redis"
+LABEL org.opencontainers.image.source=https://github.com/smy116/db-backup
+LABEL org.opencontainers.image.description="数据库定时备份容器，支持PostgreSQL、MySQL"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # 安装必要的软件包
 RUN apk update && apk add --no-cache \
     postgresql-client \
     mysql-client \
-    tar \
     zip \
     unzip \
     tzdata \
     dcron \
     ca-certificates \
     bash \
-    s3cmd \
-    py3-pip
+    curl \
+    rclone
 
 # 设置默认时区
 ENV TZ="Asia/Shanghai"
