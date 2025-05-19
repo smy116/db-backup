@@ -47,7 +47,7 @@ provider = Other
 access_key_id = ${S3_ACCESS_KEY}
 secret_access_key = ${S3_SECRET_KEY}
 region = ${S3_REGION}
-endpoint = ${endpoint}
+endpoint = ${S3_URL}
 EOF
 
   # 设置s3_path_style
