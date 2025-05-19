@@ -153,7 +153,7 @@ backup_postgresql() {
   local temp_dir=$(mktemp -d)
   local date_suffix=$(date +"%Y%m%d_%H%M%S")
   local backup_file="pg_backup_$date_suffix"
-  local local_backup_path="/backup/temp/$backup_file.zip"
+  local local_backup_path="$temp_dir/$backup_file.zip"
   
   export PGPASSWORD=$PG_PASSWORD
   
@@ -196,7 +196,7 @@ backup_mysql() {
   local temp_dir=$(mktemp -d)
   local date_suffix=$(date +"%Y%m%d_%H%M%S")
   local backup_file="mysql_backup_$date_suffix"
-  local local_backup_path="/backup/temp/$backup_file.zip"
+  local local_backup_path="$temp_dir/$backup_file.zip"
   
   # 创建默认配置文件
   cat > "$temp_dir/my.cnf" <<EOF
@@ -268,7 +268,6 @@ main() {
   
   # 确保备份目录存在
   check_backup_dir "/backup"
-  check_backup_dir "/backup/temp"
   
   log "备份保留天数: $RETENTION_DAYS 天"
   
