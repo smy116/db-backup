@@ -22,47 +22,42 @@ check_encryption_config() {
 # 配置rclone
 configure_rclone() {
   # 设置默认值
-  S3_URL=${S3_URL:-""}
-  S3_BUCKET=${S3_BUCKET:-""}
-  S3_ACCESS_KEY=${S3_ACCESS_KEY:-""}
-  S3_SECRET_KEY=${S3_SECRET_KEY:-""}
-  S3_REGION=${S3_REGION:-"us-east-1"}
-  S3_USE_PATH_STYLE=${S3_USE_PATH_STYLE:-"false"}
+  RCLONE_CONFIG_PATH=${RCLONE_CONFIG_PATH:-"/backup/rclone.conf"}
   
-  # 检查必需的配置
-  if [ -z "$S3_URL" ] || [ -z "$S3_BUCKET" ] || [ -z "$S3_ACCESS_KEY" ] || [ -z "$S3_SECRET_KEY" ]; then
-    log "错误: S3配置不完整，请检查S3_URL, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY环境变量"
-    return 1
-  fi
-
-  # 创建rclone配置
-  log "配置rclone..."
-  mkdir -p ~/.config/rclone
-  
-  # 配置S3存储
-  cat > ~/.config/rclone/rclone.conf <<EOF
-[s3]
-type = s3
-provider = Other
-access_key_id = ${S3_ACCESS_KEY}
-secret_access_key = ${S3_SECRET_KEY}
-region = ${S3_REGION}
-endpoint = ${S3_URL}
+  # 检查rclone配置文件是否存在
+  if [ -f "$RCLONE_CONFIG_PATH" ]; then
+    log "使用现有rclone配置文件: $RCLONE_CONFIG_PATH"
+    # 确保rclone配置目录存在
+    mkdir -p ~/.config/rclone
+    # 复制配置文件到rclone默认位置
+    cp "$RCLONE_CONFIG_PATH" ~/.config/rclone/rclone.conf
+  else
+    log "配置文件不存在，创建默认的backup配置..."
+    # 确保rclone配置目录存在
+    mkdir -p ~/.config/rclone
+    mkdir -p /backup  # 确保备份目录存在
+    
+    # 创建默认alias配置，指向本地/backup目录
+    cat > ~/.config/rclone/rclone.conf <<EOF
+[backup]
+type = alias
+remote = /backup
 EOF
-
-  # 设置s3_path_style
-  if [ "$S3_USE_PATH_STYLE" = "true" ]; then
-    echo "force_path_style = true" >> ~/.config/rclone/rclone.conf
+    
+    # 拷贝配置回到指定路径便于持久化
+    cp ~/.config/rclone/rclone.conf "$RCLONE_CONFIG_PATH"
+    log "已创建默认配置文件: $RCLONE_CONFIG_PATH，指向本地/backup目录"
   fi
   
-  # 测试连接
-  rclone --no-check-certificate lsd s3:${S3_BUCKET}
+  # 测试backup存储是否可用
+  log "测试backup存储系统连接..."
+  rclone lsd backup:
   if [ $? -ne 0 ]; then
-    log "错误: 无法连接到S3存储，请检查配置和网络连接"
+    log "错误: 无法连接到backup存储系统，请检查配置"
     return 1
   fi
   
-  log "rclone配置验证成功"
+  log "rclone backup配置验证成功"
   return 0
 }
 
@@ -80,45 +75,36 @@ upload_with_rclone() {
   local local_file=$1
   local remote_path=$2
   
-  log "上传文件到远程存储: $local_file -> s3:${S3_BUCKET}/${remote_path}"
-  rclone --no-check-certificate copy "$local_file" "s3:${S3_BUCKET}/${remote_path%/*}/"
+  log "上传文件到backup存储: $local_file -> backup:${remote_path%/*}/"
+  rclone --no-check-certificate copy "$local_file" "backup:${remote_path%/*}/"
   if [ $? -ne 0 ]; then
     log "上传文件失败: $local_file"
     return 1
   fi
   
-  log "文件成功上传到远程存储"
+  log "文件成功上传到backup存储"
   return 0
 }
 
-# 使用rclone清理过期备份
+# 清理过期备份
 cleanup_old_backups() {
   local backup_dir=$1
-  local storage_type=${STORAGE_TYPE:-"local"}
   local retention_days=${RETENTION_DAYS:-30}
   
-  if [ "$storage_type" = "local" ]; then
-    log "清理本地超过${retention_days}天的备份文件: $backup_dir"
-    find "$backup_dir" -name "*.zip" -type f -mtime +${retention_days} -delete
-  elif [ "$storage_type" = "s3" ]; then
-    # 提取S3路径前缀 (从backup_dir中提取最后一个目录名)
-    local prefix=$(basename "$backup_dir")
-    
-    log "清理S3超过${retention_days}天的备份文件: $prefix/"
-    
-    # 使用rclone的max-age过滤删除旧文件
-    # 计算保留时间（秒）
-    local retention_seconds=$((retention_days * 24 * 60 * 60))
-    
-    # 使用rclone删除超过保留天数的文件
-    rclone --no-check-certificate delete --min-age ${retention_days}d "s3:${S3_BUCKET}/${prefix}/"
-    if [ $? -ne 0 ]; then
-      log "清理过期备份失败"
-      return 1
-    fi
-    
-    log "成功清理过期备份"
+  # 提取路径前缀 (从backup_dir中提取最后一个目录名)
+  local prefix=$(basename "$backup_dir")
+  
+  # 清理远程backup存储的备份
+  log "清理backup存储中超过${retention_days}天的备份文件: $prefix/"
+  
+  # 使用rclone删除超过保留天数的文件
+  rclone --no-check-certificate delete --min-age ${retention_days}d "backup:${prefix}/"
+  if [ $? -ne 0 ]; then
+    log "清理backup存储中的过期备份失败"
+    return 1
   fi
+  
+  log "成功清理过期备份"
 }
 
 # PostgreSQL备份函数
@@ -192,27 +178,26 @@ backup_postgresql() {
   rm -rf "$temp_dir"
   unset PGPASSWORD
   
-  # 根据存储类型处理备份文件
-  local storage_type=${STORAGE_TYPE:-"local"}
-  if [ "$storage_type" = "local" ]; then
-    # 清理本地过期备份
+  # 处理备份文件
+  log "PostgreSQL备份完成: $local_backup_path"
+  
+  # 检查并配置rclone
+  if configure_rclone; then
+    # 上传到backup存储
+    upload_with_rclone "$local_backup_path" "pg/$backup_file.zip"
+    
+    # 清理过期备份
     cleanup_old_backups "/backup/pg"
-    log "PostgreSQL备份完成: $local_backup_path"
-  elif [ "$storage_type" = "s3" ]; then
-    # 上传到S3
-    if configure_rclone; then
-      upload_with_rclone "$local_backup_path" "pg/$backup_file.zip"
-      # 清理S3过期备份
-      cleanup_old_backups "/backup/pg"
-      # 可选：上传成功后删除本地文件
-      if [ "${S3_KEEP_LOCAL:-false}" != "true" ]; then
-        rm -f "$local_backup_path"
-        log "已删除本地备份文件"
-      fi
-    else
-      log "警告: S3配置错误，使用本地存储作为备份"
-      cleanup_old_backups "/backup/pg"
+    
+    # 可选：上传成功后删除本地文件
+    if [ "${KEEP_LOCAL:-true}" != "true" ]; then
+      rm -f "$local_backup_path"
+      log "已删除本地备份文件"
     fi
+  else
+    log "警告: backup存储配置错误或不可用，仅保留本地备份"
+    # 清理本地过期备份
+    find "/backup/pg" -name "*.zip" -type f -mtime +${RETENTION_DAYS:-30} -delete
   fi
 }
 
@@ -324,27 +309,26 @@ EOF
   # 清理临时文件
   rm -rf "$temp_dir"
   
-  # 根据存储类型处理备份文件
-  local storage_type=${STORAGE_TYPE:-"local"}
-  if [ "$storage_type" = "local" ]; then
-    # 清理本地过期备份
+  # 处理备份文件
+  log "MySQL备份完成: $local_backup_path"
+  
+  # 检查并配置rclone
+  if configure_rclone; then
+    # 上传到backup存储
+    upload_with_rclone "$local_backup_path" "mysql/$backup_file.zip"
+    
+    # 清理过期备份
     cleanup_old_backups "/backup/mysql"
-    log "MySQL备份完成: $local_backup_path"
-  elif [ "$storage_type" = "s3" ]; then
-    # 上传到远程存储
-    if configure_rclone; then
-      upload_with_rclone "$local_backup_path" "mysql/$backup_file.zip"
-      # 清理远程过期备份
-      cleanup_old_backups "/backup/mysql"
-      # 可选：上传成功后删除本地文件
-      if [ "${S3_KEEP_LOCAL:-false}" != "true" ]; then
-        rm -f "$local_backup_path"
-        log "已删除本地备份文件"
-      fi
-    else
-      log "警告: S3配置错误，使用本地存储作为备份"
-      cleanup_old_backups "/backup/mysql"
+    
+    # 可选：上传成功后删除本地文件
+    if [ "${KEEP_LOCAL:-true}" != "true" ]; then
+      rm -f "$local_backup_path"
+      log "已删除本地备份文件"
     fi
+  else
+    log "警告: backup存储配置错误或不可用，仅保留本地备份"
+    # 清理本地过期备份
+    find "/backup/mysql" -name "*.zip" -type f -mtime +${RETENTION_DAYS:-30} -delete
   fi
 }
 
@@ -369,17 +353,10 @@ main() {
     log "备份加密未启用"
   fi
   
-  # 检查存储类型
-  local storage_type=${STORAGE_TYPE:-"local"}
-  log "当前存储类型: $storage_type"
-  
-  # 如果使用S3存储，预先验证rclone配置
-  if [ "$storage_type" = "s3" ]; then
-    log "验证rclone配置..."
-    if ! configure_rclone; then
-      log "警告: S3配置验证失败，将使用本地存储作为备份"
-      export STORAGE_TYPE="local"
-    fi
+  # 验证rclone配置
+  log "验证backup存储配置..."
+  if ! configure_rclone; then
+    log "警告: backup存储配置验证失败，将仅使用本地/backup目录"
   fi
   
   # 执行各数据库的备份

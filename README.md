@@ -9,11 +9,10 @@
 - 每种数据库类型的备份分别存储在独立目录
 - 备份文件自动压缩为 ZIP 格式，提供更高压缩率
 - 支持备份文件加密保护，保障数据安全
-- 支持本地存储或 S3 兼容存储
-- 自定义备份保留天数（默认 30 天，本地和 S3 通用）
+- 支持通过 rclone 配置任意存储系统
+- 自定义备份保留天数（默认 30 天）
 - 使用 rclone 统一管理本地和远程存储
 - 基于文件创建时间清理旧备份，更加智能和可靠
-- 支持 S3 Path Style 访问方式
 - 通过环境变量灵活配置备份参数
 - 支持选择性启用或禁用各类数据库的备份功能
 - 兼容 MariaDB 11 数据库
@@ -57,7 +56,7 @@ services:
       - TZ=Asia/Shanghai # 设置容器时区
       - RETENTION_DAYS=30 # 备份保留天数
       # 存储配置
-      - STORAGE_TYPE=local # 使用本地存储
+      - KEEP_LOCAL=true # 是否保留本地备份
       # PostgreSQL配置
       - ENABLE_PG=true
       - PG_HOST=postgres
@@ -78,7 +77,7 @@ services:
     restart: unless-stopped
 ```
 
-#### S3 存储示例
+#### 自定义 rclone 配置示例
 
 ```yaml
 version: "3"
@@ -93,14 +92,8 @@ services:
       - TZ=Asia/Shanghai # 设置容器时区
       - RETENTION_DAYS=30 # 备份保留天数
       # 存储配置
-      - STORAGE_TYPE=s3 # 使用 S3 存储
-      - S3_URL=https://s3.example.com # S3 端点 URL
-      - S3_ACCESS_KEY=your_access_key # S3 访问密钥
-      - S3_SECRET_KEY=your_secret_key # S3 密钥
-      - S3_BUCKET=database-backups # S3 存储桶名称
-      - S3_REGION=us-east-1 # S3 区域
-      - S3_USE_PATH_STYLE=false # 是否使用 Path Style 访问
-      - S3_KEEP_LOCAL=false # 上传后是否保留本地备份
+      - RCLONE_CONFIG_PATH=/backup/rclone.conf # rclone配置文件路径
+      - KEEP_LOCAL=false # 上传后是否保留本地备份
       # PostgreSQL配置
       - ENABLE_PG=true
       - PG_HOST=postgres
@@ -114,7 +107,8 @@ services:
       - MYSQL_USER=root
       - MYSQL_PASSWORD=secret
     volumes:
-      - /path/to/backup:/backup # 本地备份目录（如果保留本地备份）
+      - /path/to/backup:/backup # 本地备份目录
+      - /path/to/rclone.conf:/backup/rclone.conf # rclone配置文件 (可选)
     restart: unless-stopped
 ```
 
@@ -138,18 +132,12 @@ services:
 
 ### 存储配置
 
-| 环境变量            | 说明                                 | 默认值      |
-| ------------------- | ------------------------------------ | ----------- |
-| `STORAGE_TYPE`      | 存储类型，可选值为 `local` 或 `s3`   | `local`     |
-| `S3_URL`            | S3 端点 URL (仅当 STORAGE_TYPE=s3)   | `""`        |
-| `S3_ACCESS_KEY`     | S3 访问密钥 (仅当 STORAGE_TYPE=s3)   | `""`        |
-| `S3_SECRET_KEY`     | S3 密钥 (仅当 STORAGE_TYPE=s3)       | `""`        |
-| `S3_BUCKET`         | S3 存储桶名称 (仅当 STORAGE_TYPE=s3) | `""`        |
-| `S3_REGION`         | S3 区域 (仅当 STORAGE_TYPE=s3)       | `us-east-1` |
-| `S3_USE_PATH_STYLE` | 是否使用 Path Style 访问             | `false`     |
-| `S3_KEEP_LOCAL`     | 上传到 S3 后是否保留本地备份文件     | `false`     |
+| 环境变量             | 说明                         | 默认值                |
+| -------------------- | ---------------------------- | --------------------- |
+| `RCLONE_CONFIG_PATH` | rclone 配置文件路径          | `/backup/rclone.conf` |
+| `KEEP_LOCAL`         | 上传到远程后是否保留本地备份 | `true`                |
 
-**备注**：本项目使用 rclone 来管理本地和 S3 远程存储，相比于 s3cmd，rclone 提供了更加统一的文件管理接口和更智能的文件过期清理机制。
+**备注**：本项目使用 rclone 来管理本地和远程存储，使用名称为"backup"的存储系统进行备份。如果配置文件不存在，将自动创建一个指向本地 /backup 目录的 alias 类型存储。
 
 ### PostgreSQL 配置
 
@@ -173,19 +161,123 @@ services:
 | `MYSQL_PASSWORD`  | MySQL 密码                                                  | `""` (空)   |
 | `MYSQL_DATABASES` | 要备份的数据库列表，使用逗号分隔，或设为`all`备份所有数据库 | `all`       |
 
+## rclone 存储配置示例
+
+以下是几种常见存储系统的 rclone 配置示例，可以作为 `rclone.conf` 文件的内容。请确保存储系统名称为 `backup`：
+
+### 本地目录（默认配置）
+
+```
+[backup]
+type = alias
+remote = /backup
+```
+
+### S3 兼容存储 (AWS S3, MinIO 等)
+
+```
+[backup]
+type = s3
+provider = AWS
+access_key_id = your_access_key
+secret_access_key = your_secret_key
+region = us-east-1
+endpoint = https://s3.amazonaws.com
+# 如需使用Path Style，添加以下行
+# force_path_style = true
+```
+
+### 阿里云 OSS
+
+```
+[backup]
+type = s3
+provider = Alibaba
+access_key_id = your_access_key
+secret_access_key = your_secret_key
+endpoint = https://oss-cn-hangzhou.aliyuncs.com
+force_path_style = false
+```
+
+### 腾讯云 COS
+
+```
+[backup]
+type = s3
+provider = TencentCOS
+access_key_id = your_access_key
+secret_access_key = your_secret_key
+endpoint = https://cos.ap-guangzhou.myqcloud.com
+force_path_style = false
+```
+
+### WebDAV 存储
+
+```
+[backup]
+type = webdav
+url = https://webdav.example.com
+vendor = other
+user = your_username
+pass = your_password
+```
+
+### FTP 服务器
+
+```
+[backup]
+type = ftp
+host = ftp.example.com
+user = your_username
+pass = your_password
+# 如果需要使用FTPS (FTP over SSL/TLS)
+# tls = true
+```
+
+### SFTP (SSH) 服务器
+
+```
+[backup]
+type = sftp
+host = sftp.example.com
+user = your_username
+# 密码认证
+pass = your_password
+# 或使用SSH密钥认证
+# key_file = /path/to/private_key
+```
+
+### Dropbox
+
+```
+[backup]
+type = dropbox
+token = {"access_token":"xxx","token_type":"bearer","refresh_token":"xxx","expiry":"xxx"}
+```
+
+### Google Drive
+
+```
+[backup]
+type = drive
+client_id = your_client_id
+client_secret = your_client_secret
+token = {"access_token":"xxx","token_type":"Bearer","refresh_token":"xxx","expiry":"xxx"}
+```
+
 ## 备份文件位置
 
-### 本地存储 (STORAGE_TYPE=local)
+### 本地备份
 
 - PostgreSQL 备份: `/backup/pg/pg_backup_YYYYMMDD_HHMMSS.zip`
 - MySQL 备份: `/backup/mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
 
-### S3 存储 (STORAGE_TYPE=s3)
+### 远程备份
 
-- PostgreSQL 备份: `s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip`
-- MySQL 备份: `s3://<S3_BUCKET>/mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
+- PostgreSQL 备份: `backup:pg/pg_backup_YYYYMMDD_HHMMSS.zip`
+- MySQL 备份: `backup:mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
 
-所有备份文件（无论本地还是 S3）都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。本地备份通过 `find` 命令根据文件修改时间删除，远程备份通过 rclone 的 `max-age` 功能根据文件创建时间清理。
+所有备份文件都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。本地备份通过 `find` 命令根据文件修改时间删除，远程备份通过 rclone 的 `--min-age` 功能根据文件创建时间清理。
 
 ## 数据库恢复
 
@@ -281,35 +373,26 @@ mysql -h [host] -P [port] -u [username] -p [database_name] < /tmp/table_backup.s
 rm -rf /tmp/restore
 ```
 
-## 使用 S3 存储的注意事项
+## 使用远程存储的注意事项
 
-1. **S3 兼容性**: 本工具使用 rclone 支持 AWS S3 和其他兼容 S3 API 的对象存储服务，如 MinIO、阿里云 OSS、腾讯云 COS 等。
+1. **自动配置**: 如果没有找到 rclone 配置文件，系统将自动创建一个名为 `backup` 的 alias 类型存储，指向本地的 `/backup` 目录。
 
-2. **Path Style vs Virtual-Hosted Style**:
+2. **错误处理**: 如果 backup 存储系统配置错误或不可用，系统将仅使用本地存储并记录警告日志，不会终止容器运行。
 
-   - Path Style 格式: `https://s3.example.com/bucket-name/object-key`
-   - Virtual-Hosted Style 格式: `https://bucket-name.s3.example.com/object-key`
-   - 使用 `S3_USE_PATH_STYLE=true` 开启 Path Style 访问方式
+3. **权限配置**: 远程存储系统需要具有以下操作权限:
 
-3. **权限配置**: S3 用户需要具有以下权限:
+   - 列出目录内容
+   - 上传文件
+   - 删除文件
 
-   - `s3:PutObject`: 上传备份文件
-   - `s3:ListBucket`: 列出桶中的文件
-   - `s3:DeleteObject`: 删除过期备份文件
+4. **基于时间的清理**: 本项目使用 rclone 的 `--min-age` 过滤功能，根据文件的创建时间清理旧的备份，确保准确保留指定天数的备份。
 
-4. **基于时间的清理**: 本项目使用 rclone 的 `--min-age` 过滤功能，根据文件的创建时间清理旧的备份，确保准确保留指定天数的备份，而不依赖于文件名匹配。
-
-5. **读取备份文件**: 可以使用以下方式从 S3 下载备份文件:
+5. **读取备份文件**: 可以使用以下方式从远程存储下载备份文件:
 
    ```bash
    # 使用 rclone 下载
-   rclone copy s3:<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/directory/
-
-   # 使用 AWS CLI
-   aws s3 cp s3://<S3_BUCKET>/pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/file.zip
+   rclone copy backup:pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/directory/
    ```
-
-6. **排障**: 如果 S3 配置错误，脚本会自动回退到本地存储方式，并在日志中记录错误信息。
 
 ## 许可证
 
