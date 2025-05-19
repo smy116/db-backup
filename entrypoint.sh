@@ -42,7 +42,6 @@ log "PostgreSQL备份: ${ENABLE_PG:-false}"
 log "MySQL备份: ${ENABLE_MYSQL:-false}"
 log "备份保留天数: ${RETENTION_DAYS:-30}"
 log "Rclone配置路径: ${RCLONE_CONFIG_PATH:-/backup/rclone.conf}"
-log "保留本地备份: ${KEEP_LOCAL:-true}"
 log "---------------------------------------"
 
 # 创建日志文件

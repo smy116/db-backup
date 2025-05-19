@@ -93,7 +93,6 @@ services:
       - RETENTION_DAYS=30 # 备份保留天数
       # 存储配置
       - RCLONE_CONFIG_PATH=/backup/rclone.conf # rclone配置文件路径
-      - KEEP_LOCAL=false # 上传后是否保留本地备份
       # PostgreSQL配置
       - ENABLE_PG=true
       - PG_HOST=postgres
@@ -132,10 +131,9 @@ services:
 
 ### 存储配置
 
-| 环境变量             | 说明                         | 默认值                |
-| -------------------- | ---------------------------- | --------------------- |
-| `RCLONE_CONFIG_PATH` | rclone 配置文件路径          | `/backup/rclone.conf` |
-| `KEEP_LOCAL`         | 上传到远程后是否保留本地备份 | `true`                |
+| 环境变量             | 说明                | 默认值                |
+| -------------------- | ------------------- | --------------------- |
+| `RCLONE_CONFIG_PATH` | rclone 配置文件路径 | `/backup/rclone.conf` |
 
 **备注**：本项目使用 rclone 来管理本地和远程存储，使用名称为"backup"的存储系统进行备份。如果配置文件不存在，将自动创建一个指向本地 /backup 目录的 alias 类型存储。
 

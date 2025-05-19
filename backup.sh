@@ -76,11 +76,9 @@ upload_with_rclone() {
   
   log "文件成功上传到backup存储"
   
-  # 可选：上传成功后删除本地文件
-  if [ "${KEEP_LOCAL:-true}" != "true" ]; then
-    rm -f "$local_file"
-    log "已删除本地备份文件"
-  fi
+  # 上传成功后删除本地文件
+  rm -f "$local_file"
+  log "已删除本地临时备份文件"
 
   return 0
 }
