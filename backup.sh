@@ -179,7 +179,6 @@ backup_postgresql() {
   compress_and_upload_backup "$temp_dir" "$local_backup_path" "pg/$backup_file.zip" || return 1
   cleanup_old_backups "/backup/pg"
 
-  fi
 }
 
 # MySQL备份函数
