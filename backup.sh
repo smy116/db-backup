@@ -27,31 +27,23 @@ configure_rclone() {
   # 检查rclone配置文件是否存在
   if [ -f "$RCLONE_CONFIG_PATH" ]; then
     log "使用现有rclone配置文件: $RCLONE_CONFIG_PATH"
-    # 确保rclone配置目录存在
-    mkdir -p ~/.config/rclone
-    # 复制配置文件到rclone默认位置
-    cp "$RCLONE_CONFIG_PATH" ~/.config/rclone/rclone.conf
   else
     log "配置文件不存在，创建默认的backup配置..."
-    # 确保rclone配置目录存在
-    mkdir -p ~/.config/rclone
     mkdir -p /backup  # 确保备份目录存在
+    mkdir -p $(dirname "$RCLONE_CONFIG_PATH")  # 确保配置文件目录存在
     
-    # 创建默认alias配置，指向本地/backup目录
-    cat > ~/.config/rclone/rclone.conf <<EOF
+    # 直接在RCLONE_CONFIG_PATH指定的位置创建默认配置
+    cat > "$RCLONE_CONFIG_PATH" <<EOF
 [backup]
 type = alias
 remote = /backup
 EOF
-    
-    # 拷贝配置回到指定路径便于持久化
-    cp ~/.config/rclone/rclone.conf "$RCLONE_CONFIG_PATH"
     log "已创建默认配置文件: $RCLONE_CONFIG_PATH，指向本地/backup目录"
   fi
   
   # 测试backup存储是否可用
   log "测试backup存储系统连接..."
-  rclone lsd backup:
+  rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate lsd backup:
   if [ $? -ne 0 ]; then
     log "错误: 无法连接到backup存储系统，请检查配置"
     return 1
@@ -76,13 +68,20 @@ upload_with_rclone() {
   local remote_path=$2
   
   log "上传文件到backup存储: $local_file -> backup:${remote_path%/*}/"
-  rclone --no-check-certificate copy "$local_file" "backup:${remote_path%/*}/"
+  rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate copy "$local_file" "backup:${remote_path%/*}/"
   if [ $? -ne 0 ]; then
     log "上传文件失败: $local_file"
     return 1
   fi
   
   log "文件成功上传到backup存储"
+  
+  # 可选：上传成功后删除本地文件
+  if [ "${KEEP_LOCAL:-true}" != "true" ]; then
+    rm -f "$local_file"
+    log "已删除本地备份文件"
+  fi
+
   return 0
 }
 
@@ -98,7 +97,7 @@ cleanup_old_backups() {
   log "清理backup存储中超过${retention_days}天的备份文件: $prefix/"
   
   # 使用rclone删除超过保留天数的文件
-  rclone --no-check-certificate delete --min-age ${retention_days}d "backup:${prefix}/"
+  rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate delete --min-age ${retention_days}d "backup:${prefix}/"
   if [ $? -ne 0 ]; then
     log "清理backup存储中的过期备份失败"
     return 1
@@ -151,7 +150,7 @@ backup_postgresql() {
   
   # 压缩备份文件
   log "压缩PostgreSQL备份文件..."
-  local local_backup_path="/backup/pg/$backup_file.zip"
+  local local_backup_path="/backup/temp/$backup_file.zip"
   
   # 检查是否启用加密
   if [ "$ENABLE_ENCRYPTION" = "true" ]; then
@@ -188,16 +187,7 @@ backup_postgresql() {
     
     # 清理过期备份
     cleanup_old_backups "/backup/pg"
-    
-    # 可选：上传成功后删除本地文件
-    if [ "${KEEP_LOCAL:-true}" != "true" ]; then
-      rm -f "$local_backup_path"
-      log "已删除本地备份文件"
-    fi
-  else
-    log "警告: backup存储配置错误或不可用，仅保留本地备份"
-    # 清理本地过期备份
-    find "/backup/pg" -name "*.zip" -type f -mtime +${RETENTION_DAYS:-30} -delete
+
   fi
 }
 
@@ -282,7 +272,7 @@ EOF
   
   # 压缩备份文件
   log "压缩MySQL备份文件..."
-  local local_backup_path="/backup/mysql/$backup_file.zip"
+  local local_backup_path="/backup/temp/$backup_file.zip"
   
   # 删除配置文件，避免包含敏感信息
   rm -f "$temp_dir/my.cnf"
@@ -319,20 +309,9 @@ EOF
     
     # 清理过期备份
     cleanup_old_backups "/backup/mysql"
-    
-    # 可选：上传成功后删除本地文件
-    if [ "${KEEP_LOCAL:-true}" != "true" ]; then
-      rm -f "$local_backup_path"
-      log "已删除本地备份文件"
-    fi
-  else
-    log "警告: backup存储配置错误或不可用，仅保留本地备份"
-    # 清理本地过期备份
-    find "/backup/mysql" -name "*.zip" -type f -mtime +${RETENTION_DAYS:-30} -delete
+
   fi
 }
-
-# Redis备份功能已移除
 
 # 主函数
 main() {
