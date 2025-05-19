@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 CRON_SCHEDULE=${CRON_SCHEDULE:-"0 3 * * *"}

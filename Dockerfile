@@ -13,8 +13,6 @@ RUN apk update && apk add --no-cache \
     tzdata \
     dcron \
     ca-certificates \
-    bash \
-    curl \
     rclone
 
 # 设置默认时区
