@@ -192,7 +192,7 @@ pass = your_password
 - PostgreSQL 备份: `backup:pg/pg_backup_YYYYMMDD_HHMMSS.zip`
 - MySQL 备份: `backup:mysql/mysql_backup_YYYYMMDD_HHMMSS.zip`
 
-所有备份文件都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。本地备份通过 `find` 命令根据文件修改时间删除，远程备份通过 rclone 的 `--min-age` 功能根据文件创建时间清理。
+所有备份文件都会自动保留 `RETENTION_DAYS` 指定的天数（默认 30 天），超过保留期限的备份将被自动删除。
 
 ## 数据库恢复
 
