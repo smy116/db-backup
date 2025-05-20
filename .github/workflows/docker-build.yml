@@ -3,9 +3,19 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'docs/**' # 示例：忽略 docs 文件夹下的所有文件
+      - '**.md'   # 示例：忽略所有 Markdown 文件的更改
     tags: ["v*.*.*"]
   pull_request:
     branches: [main, master]
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'docs/**' # 示例：忽略 docs 文件夹下的所有文件
+      - '**.md'   # 示例：忽略所有 Markdown 文件的更改
 
 env:
   REGISTRY: ghcr.io
