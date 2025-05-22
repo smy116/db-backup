@@ -1,7 +1,6 @@
 #!/bin/sh
 # set -e # 延迟到trap设置之后
 
-# --- 清理陷阱 ---
 # 初始化一个数组，用于存储需要清理的临时文件/目录的路径
 TEMP_ITEMS_TO_CLEAN=()
 PGPASSWORD_SET_BY_SCRIPT="" # 标记PGPASSWORD是否由此脚本设置
