@@ -15,8 +15,19 @@
 - 基于文件创建时间清理旧备份，更加智能和可靠
 - 通过环境变量灵活配置备份参数
 - 支持选择性启用或禁用各类数据库的备份功能
+- **高可靠性**: 增强的错误处理和日志记录，确保容器在备份失败时保持稳定运行，并尝试后续计划任务。
 - 兼容 MariaDB 11 数据库
 - 支持自定义备份计划
+
+## 运行稳健性 (Operational Robustness)
+
+此备份容器在设计时充分考虑了运行稳定性：
+
+-   **备份失败的弹性处理：**
+    -   如果初始备份（由 `BACKUP_ON_START=true` 触发）失败，错误将被记录，但容器**不会**崩溃。它将继续运行以尝试所有未来的计划备份。
+    -   如果计划备份失败（例如，数据库暂时不可用、rclone 远程存储问题），错误会记录到 cron 日志中（可通过 `docker logs <container_name>` 查看），但 cron 守护进程和容器将继续运行。后续备份将按计划尝试执行。
+-   **改进的错误处理：** 底层的 `backup.sh` 脚本增强了错误检测能力，并提供更具体的日志记录以帮助诊断问题。它还使用不同的退出码来表明成功或失败。
+-   **资源清理：** 在备份操作期间创建的临时文件和目录会被认真清理，即使在大多数错误情况下也是如此，以防止磁盘空间耗尽。脚本中使用到的环境变量中的敏感信息（例如 `PGPASSWORD`）在使用后会被取消设置。
 
 ## 使用方法
 
@@ -308,6 +319,79 @@ rm -rf /tmp/restore
    # 使用 rclone 下载
    rclone copy backup:pg/pg_backup_YYYYMMDD_HHMMSS.zip /path/to/local/directory/
    ```
+
+## 问题排查 (Troubleshooting)
+
+本节提供诊断和解决常见问题的指南。
+
+### 日志位置
+
+-   **主要日志：** 主要信息来源是容器的日志输出。您可以使用以下命令查看：
+    ```bash
+    docker logs <container_name_or_id>
+    ```
+    这包括：
+    -   `entrypoint.sh` 的启动消息。
+    -   每次 `backup.sh` 执行开始时记录的关键工具（`rclone`, `zip`, `pg_dump`, `mysqldump`, `mariadb-dump`）的版本信息。
+    -   `backup.sh` 脚本针对初始备份（`BACKUP_ON_START=true`）和计划备份的输出。
+    -   Cron 守护进程消息。
+-   **Cron 日志文件 (内部)：** 在容器内部，cron 任务的输出也会定向到 `/var/log/cron.log`。`entrypoint.sh` 末尾的 `tail -f /var/log/cron.log` 命令确保此内容流式传输到 `docker logs`。
+
+### 常见错误及解读
+
+-   **初始备份失败（容器启动期间记录）**
+    -   **症状：** 容器启动时，在 "执行初始备份..." 日志行之后立即看到来自 `backup.sh` 的错误消息。
+    -   **含义：** `BACKUP_ON_START` 设置为 `true`，并且第一次自动备份尝试遇到了问题。
+    -   **操作：** 查看紧随失败消息之后的容器日志，以了解具体错误（例如，数据库连接、rclone 问题）。
+    -   **注意：** 容器将保持运行，并且仍会尝试计划的备份。
+
+-   **备份脚本在 cron 日志中以非零状态退出**
+    -   **症状：** 日志条目（通过 `docker logs`）显示类似 `INFO: Sending PIDs of all processes in session XXXX killed by TERM signal (exit status 1)` 的内容。或者更直接地，在计划运行期间出现来自 `backup.sh` 的错误消息。
+    -   **含义：** 计划的备份运行失败。退出状态（例如 `1`）表示失败。
+    -   **操作：** 检查此 cron 消息之前的 `backup.sh` 详细日志以确定原因。
+
+-   **与数据库连接相关的错误（例如，身份验证失败、数据库未找到、连接被拒绝）**
+    -   **症状：** 日志包含类似 `psql: error: connection to server ... failed: FATAL: password authentication failed for user "..."`、`mysqldump: Got error: 1045: Access denied for user...` 或 `Connection refused` 的消息。
+    -   **操作：**
+        -   验证数据库主机名/IP (`PG_HOST`, `MYSQL_HOST`) 是否正确，并且可以从备份容器内部访问。
+        -   检查端口 (`PG_PORT`, `MYSQL_PORT`)。
+        -   确保用户名 (`PG_USER`, `MYSQL_USER`) 和密码 (`PG_PASSWORD`, `MYSQL_PASSWORD`) 正确无误。
+        -   确认 `PG_DATABASES` 或 `MYSQL_DATABASES` 中指定的数据库名称存在，并且用户具有适当的权限。
+
+-   **与 rclone 相关的错误（例如，"Failed to copy", "Failed to delete", "Config not found"）**
+    -   **症状 (配置未找到)：** 启动期间，您可能会看到 "警告：rclone配置验证失败或无法连接到 'backup:' 远程存储..." 或 "错误: 无法连接到backup存储系统..."。
+    -   **含义 (配置未找到)：** 如果 `RCLONE_CONFIG_PATH` 指向不存在或无效的 rclone 配置文件，脚本将记录此情况并默认使用本地 `/backup` 目录作为存储目标。
+    -   **操作 (配置未找到)：**
+        -   如果您打算使用自定义 rclone 远程存储，请确保您的 `rclone.conf` 文件已正确地卷载到 `RCLONE_CONFIG_PATH` 指定的路径（默认为 `/backup/rclone.conf`）。
+        -   验证 `rclone.conf` 包含一个名为 `[backup]` 的远程配置。这可以是到另一个已定义远程的别名。
+    -   **症状 (上传/删除/列出错误)：** 日志显示类似 `Failed to copy: ...`、`Failed to delete: ...` 或在 `rclone lsd` 期间出错的消息。
+    -   **含义 (上传/删除/列出错误)：** 与 rclone 远程存储通信或写入时出现问题。
+    -   **操作 (上传/删除/列出错误)：**
+        -   检查您的 `rclone.conf` 中 `[backup]` 远程的配置。确保端点、凭据和其他参数正确。
+        -   验证从容器到远程存储提供商的网络连接。
+        -   确保 rclone 使用的凭据在远程存储上具有必要的权限（列出、读取、写入、删除）。
+
+-   **"设备上没有剩余空间 (No space left on device)"**
+    -   **症状：** 备份失败，并出现指示磁盘空间耗尽的消息。
+    -   **含义：** 容器内的本地存储已满。这可能是：
+        -   用于临时数据库转储的目录（`/tmp/pg_backup.XXXXXX` 或 `/tmp/mysql_backup.XXXXXX`）。
+        -   主备份卷（在容器中挂载到 `/backup`），如果 rclone 配置为使用本地路径或者初始转储非常大。
+    -   **操作：**
+        -   确保 Docker 主机具有足够的磁盘空间。
+        -   如果使用本地 rclone 远程，请确保目标目录有足够的空间。
+        -   检查旧备份是否按 `RETENTION_DAYS` 正确清理。如果没有，可能是 `rclone delete` 或远程存储对修改时间的处理存在问题。
+
+-   **"缺少命令 (Missing command)（例如，pg_dump, mysqldump, rclone, zip）"**
+    -   **症状：** `backup.sh` 运行开始时的日志指示找不到像 `rclone`、`zip`、`pg_dump` 或 `mysqldump`/`mariadb-dump` 这样的命令。
+    -   **含义：** 备份操作所需的关键工具在容器环境中缺失。如果 `ENABLE_PG` 或 `ENABLE_MYSQL` 为 true，并且其各自的转储工具缺失，则对于该备份类型是致命错误。
+    -   **操作：** 这通常表明 Docker 镜像本身存在问题（例如，在构建过程中工具未正确安装）。如果您使用的是官方预构建镜像，这种情况应该很少见。如果自行构建，请检查您的 `Dockerfile`。
+
+### 用于调试的工具版本 (Tool Versions for Debugging)
+
+在每次 `backup.sh` 执行开始时（包括初始备份和计划备份），都会记录关键工具（`rclone`, `zip`, `pg_dump`, `mysqldump`, `mariadb-dump`）的版本。这些信息在以下情况下非常有用：
+-   报告问题时。
+-   检查与您的数据库版本或 rclone 远程存储的兼容性问题时。
+-   确保预期的工具存在于容器中。
 
 ## 许可证
 
