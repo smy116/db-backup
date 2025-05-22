@@ -50,12 +50,34 @@ touch /var/log/cron.log
 log "启动cron服务..."
 crond -f &
 
+# 等待cron服务启动
+log "等待cron服务稳定..."
+sleep 2 # 给crond一点时间来启动或失败
+
+# 检查cron服务是否正在运行
+if ! pgrep crond > /dev/null; then
+  log "错误：cron服务未能启动或已意外退出。计划备份将无法运行。"
+  exit 1 # 退出容器，因为核心功能已失败
+else
+  log "信息：cron服务已成功启动并正在运行。"
+fi
+
 # 立即执行一次备份（如果BACKUP_ON_START为true）
 if [ "${BACKUP_ON_START:-false}" = "true" ]; then
-  log "执行初始备份..."
+  log "信息：执行初始备份 (BACKUP_ON_START=true)..."
+  # 临时禁用错误时退出，以便处理初始备份的失败情况
+  set +e
   /app/backup.sh
+  backup_exit_code=$?
+  set -e # 重新启用错误时退出
+
+  if [ $backup_exit_code -eq 0 ]; then
+    log "信息：初始备份成功完成。"
+  else
+    log "警告：初始备份失败 (退出码: $backup_exit_code)。详情请查看以上日志。容器将继续运行，计划备份仍将尝试执行。"
+  fi
 fi
 
 # 输出日志到标准输出
-log "启动日志监控..."
+log "启动日志监控 (tail -f /var/log/cron.log)..."
 tail -f /var/log/cron.log
