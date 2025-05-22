@@ -114,28 +114,8 @@ compress_and_upload_backup() {
   fi
 
   upload_with_rclone "$local_backup_path" "$remote_path"
-  local upload_status=$?
-
-  if [ $upload_status -ne 0 ]; then
-    log "警告：rclone上传失败。本地压缩备份文件将尝试保存到 /backup/failed_uploads/"
-    local FAILED_UPLOADS_DIR="/backup/failed_uploads"
-    mkdir -p "$FAILED_UPLOADS_DIR"
-    local local_filename=$(basename "$local_backup_path")
-    
-    cp "$local_backup_path" "$FAILED_UPLOADS_DIR/$local_filename"
-    if [ $? -eq 0 ]; then
-      log "本地备份已保存到 $FAILED_UPLOADS_DIR/$local_filename"
-    else
-      log "错误：无法将本地备份保存到 $FAILED_UPLOADS_DIR/$local_filename"
-    fi
-    
-    rm -rf "$temp_dir"
-    return 1
-  else
-    # upload_with_rclone already removes local_backup_path on success
-    rm -rf "$temp_dir" 
-    return 0
-  fi
+  
+  return 0
 }
 
 
