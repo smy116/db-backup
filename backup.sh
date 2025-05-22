@@ -114,6 +114,8 @@ compress_and_upload_backup() {
   fi
 
   upload_with_rclone "$local_backup_path" "$remote_path"
+
+  rm -rf "$temp_dir"
   
   return 0
 }
