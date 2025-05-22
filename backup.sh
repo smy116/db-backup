@@ -1,8 +1,9 @@
 #!/bin/sh
 # set -e # 延迟到trap设置之后
 
-# 初始化一个数组，用于存储需要清理的临时文件/目录的路径
-TEMP_ITEMS_TO_CLEAN=()
+# --- 清理陷阱 ---
+# 初始化一个字符串，用于存储需要清理的临时文件/目录的路径，以换行符分隔
+TEMP_ITEMS_TO_CLEAN=""
 PGPASSWORD_SET_BY_SCRIPT="" # 标记PGPASSWORD是否由此脚本设置
 
 # 脚本退出时执行的清理函数
@@ -10,12 +11,28 @@ cleanup_on_exit() {
   local exit_code=$? # 捕获脚本的退出码
   log "信息：脚本退出时执行清理 (退出码: $exit_code)..."
   
-  for item in "${TEMP_ITEMS_TO_CLEAN[@]}"; do
-    if [ -e "$item" ]; then # 检查文件/目录是否存在
-      log "信息：正在移除临时项: $item"
-      rm -rf "$item"
-    fi
-  done
+  # POSIX兼容的循环，用于处理以换行符分隔的字符串
+  if [ -n "$TEMP_ITEMS_TO_CLEAN" ]; then
+    _old_ifs="$IFS" # 保存当前IFS
+    # shellcheck disable=SC2034 # IFS is used by read in the while loop below
+    IFS='
+' # 将IFS设置为空格和换行符，以便正确分割字符串
+    
+    # 使用printf将字符串提供给while read循环
+    # 这能正确处理路径中的特殊字符
+    printf "%s\n" "$TEMP_ITEMS_TO_CLEAN" | while IFS= read -r item; do
+      # 确保item不为空，如果TEMP_ITEMS_TO_CLEAN有前导/尾随换行符，则可能发生这种情况
+      # （尽管建议的添加逻辑应能防止这种情况）
+      if [ -n "$item" ]; then 
+        if [ -e "$item" ]; then # 检查文件/目录是否存在
+          # 日志消息已翻译："信息：正在移除临时项: $item"
+          log "信息：正在移除临时项: $item"
+          rm -rf "$item"
+        fi
+      fi
+    done
+    IFS="$_old_ifs" # 恢复IFS
+  fi
   
   # 如果PGPASSWORD是由此脚本设置的，则取消设置
   if [ -n "$PGPASSWORD_SET_BY_SCRIPT" ]; then
@@ -252,7 +269,12 @@ backup_postgresql() {
   # 创建一个唯一的临时目录来存储数据库转储文件
   local temp_dir
   temp_dir=$(mktemp -d -p "/tmp" "pg_backup.XXXXXX") # 在/tmp下创建，避免填满/backup
-  TEMP_ITEMS_TO_CLEAN+=("$temp_dir") # 为trap清理注册
+  # 为trap清理注册 (POSIX兼容方式)
+  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
+    TEMP_ITEMS_TO_CLEAN="$temp_dir"
+  else
+    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$temp_dir")
+  fi
   log "信息：已为PostgreSQL创建临时目录: $temp_dir"
   local date_suffix
   date_suffix=$(date +"%Y%m%d_%H%M%S")
@@ -386,7 +408,12 @@ backup_mysql() {
   # 创建一个唯一的临时目录来存储数据库转储文件和临时配置文件
   local temp_dir
   temp_dir=$(mktemp -d -p "/tmp" "mysql_backup.XXXXXX") # 在/tmp下创建
-  TEMP_ITEMS_TO_CLEAN+=("$temp_dir") # 为trap清理注册
+  # 为trap清理注册 (POSIX兼容方式)
+  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
+    TEMP_ITEMS_TO_CLEAN="$temp_dir"
+  else
+    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$temp_dir")
+  fi
   log "信息：已为MySQL/MariaDB创建临时目录: $temp_dir"
   local date_suffix
   date_suffix=$(date +"%Y%m%d_%H%M%S")
