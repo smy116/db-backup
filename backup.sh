@@ -4,7 +4,6 @@
 # --- 清理陷阱 ---
 # 初始化一个字符串，用于存储需要清理的临时文件/目录的路径，以换行符分隔
 TEMP_ITEMS_TO_CLEAN=""
-PGPASSWORD_SET_BY_SCRIPT="" # 标记PGPASSWORD是否由此脚本设置
 
 # 脚本退出时执行的清理函数
 cleanup_on_exit() {
@@ -34,12 +33,6 @@ cleanup_on_exit() {
     IFS="$_old_ifs" # 恢复IFS
   fi
   
-  # 如果PGPASSWORD是由此脚本设置的，则取消设置
-  if [ -n "$PGPASSWORD_SET_BY_SCRIPT" ]; then
-    unset PGPASSWORD
-    PGPASSWORD_SET_BY_SCRIPT="" # 清除标记
-    log "信息：已取消设置PGPASSWORD。"
-  fi
   log "信息：清理完成。"
   # 如果脚本因 'set -e' 捕获的错误或显式的 'exit N' 而退出，
   # 我们应该保留该退出码。
@@ -287,7 +280,7 @@ backup_postgresql() {
     exit 1 # 密码缺失是关键错误，终止整个脚本
   fi
   # 将PG_PASSWORD导出为环境变量，pg_dump和psql会自动使用它
-  PGPASSWORD_SET_BY_SCRIPT="true" # 标记PGPASSWORD已由脚本设置
+
   export PGPASSWORD=$PG_PASSWORD
   log "信息：已为pg_dump/psql设置PGPASSWORD。"
   
