@@ -32,8 +32,8 @@ check_encryption_config() {
   
   # 检查加密配置
   if [ "$ENABLE_ENCRYPTION" = "true" ] && [ -z "$ENCRYPTION_PASSWORD" ]; then
-    log "警告: 加密已启用但未设置密码，将使用默认密码"
-    ENCRYPTION_PASSWORD="default_password"
+    log "错误：备份加密已启用但未提供加密密码 (ENCRYPTION_PASSWORD)。请设置密码或禁用加密。"
+    exit 1
   fi
 }
 
@@ -114,7 +114,28 @@ compress_and_upload_backup() {
   fi
 
   upload_with_rclone "$local_backup_path" "$remote_path"
-  rm -rf "$temp_dir"
+  local upload_status=$?
+
+  if [ $upload_status -ne 0 ]; then
+    log "警告：rclone上传失败。本地压缩备份文件将尝试保存到 /backup/failed_uploads/"
+    local FAILED_UPLOADS_DIR="/backup/failed_uploads"
+    mkdir -p "$FAILED_UPLOADS_DIR"
+    local local_filename=$(basename "$local_backup_path")
+    
+    cp "$local_backup_path" "$FAILED_UPLOADS_DIR/$local_filename"
+    if [ $? -eq 0 ]; then
+      log "本地备份已保存到 $FAILED_UPLOADS_DIR/$local_filename"
+    else
+      log "错误：无法将本地备份保存到 $FAILED_UPLOADS_DIR/$local_filename"
+    fi
+    
+    rm -rf "$temp_dir"
+    return 1
+  else
+    # upload_with_rclone already removes local_backup_path on success
+    rm -rf "$temp_dir" 
+    return 0
+  fi
 }
 
 
@@ -155,6 +176,11 @@ backup_postgresql() {
   local backup_file="pg_backup_$date_suffix"
   local local_backup_path="$temp_dir/$backup_file.zip"
   
+  # 检查PG_PASSWORD是否设置
+  if [ -z "$PG_PASSWORD" ]; then
+    log "错误：PostgreSQL备份已启用但未提供密码 (PG_PASSWORD)。"
+    exit 1
+  fi
   export PGPASSWORD=$PG_PASSWORD
   
   # 备份所有数据库或指定数据库
@@ -197,6 +223,12 @@ backup_mysql() {
   local backup_file="mysql_backup_$date_suffix"
   local local_backup_path="$temp_dir/$backup_file.zip"
   
+  # 检查MYSQL_PASSWORD是否设置
+  if [ -z "$MYSQL_PASSWORD" ]; then
+    log "错误：MySQL备份已启用但未提供密码 (MYSQL_PASSWORD)。"
+    exit 1
+  fi
+  
   # 创建默认配置文件
   cat > "$temp_dir/my.cnf" <<EOF
 [client]
@@ -227,33 +259,52 @@ EOF
   # 备份每个数据库
   for db in $db_list; do
     log "备份数据库: $db"
-    # 尝试使用MariaDB 11兼容的备份参数，增加--skip-lock-tables以避免锁表问题
+    local dump_log_file="$temp_dir/${db}.dump.log"
+
+    log "尝试使用 mariadb-dump (带 --skip-lock-tables)..."
     mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
-      --single-transaction --skip-lock-tables --routines --triggers --events > "$temp_dir/${db}.sql"
+      --single-transaction --skip-lock-tables --routines --triggers --events > "$temp_dir/${db}.sql" 2> "$dump_log_file"
     
-    # 检查命令是否执行成功
-    if [ $? -ne 0 ]; then
-      log "使用MariaDB 11参数备份失败，尝试兼容模式..."
-      # 回退使用基本参数
-      mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
-        --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql"
+    if [ $? -eq 0 ]; then
+      log "数据库 $db 使用 mariadb-dump (带 --skip-lock-tables) 备份成功"
+      rm -f "$dump_log_file" # 清理日志文件
+      continue
+    else
+      log "mariadb-dump (带 --skip-lock-tables) 失败. 错误信息:"
+      cat "$dump_log_file"
       
-      if [ $? -ne 0 ]; then
-        log "备份数据库 $db 失败，尝试使用mysql-dump命令..."
-        # 尝试使用mysql-dump命令（MySQL兼容模式）
-        mysqldump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
-          --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql"
+      log "尝试使用 mariadb-dump (不带 --skip-lock-tables)..."
+      mariadb-dump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
+        --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql" 2> "$dump_log_file"
+      
+      if [ $? -eq 0 ]; then
+        log "数据库 $db 使用 mariadb-dump (不带 --skip-lock-tables) 备份成功"
+        rm -f "$dump_log_file" # 清理日志文件
+        continue
+      else
+        log "mariadb-dump (不带 --skip-lock-tables) 失败. 错误信息:"
+        cat "$dump_log_file"
         
-        if [ $? -ne 0 ]; then
-          log "备份数据库 $db 失败"
+        log "尝试使用 mysqldump..."
+        mysqldump --defaults-file="$temp_dir/my.cnf" --databases "$db" \
+          --single-transaction --routines --triggers --events > "$temp_dir/${db}.sql" 2> "$dump_log_file"
+        
+        if [ $? -eq 0 ]; then
+          log "数据库 $db 使用 mysqldump 备份成功"
+          rm -f "$dump_log_file" # 清理日志文件
+          continue
+        else
+          log "mysqldump 失败. 错误信息:"
+          cat "$dump_log_file"
+          log "备份数据库 $db 彻底失败"
+          rm -f "$dump_log_file" # 清理日志文件
           continue
         fi
       fi
     fi
-    
-    log "数据库 $db 备份成功"
   done
 
+  rm -f "$temp_dir"/*.dump.log # 清理所有可能的剩余日志文件
   rm -f "$temp_dir/my.cnf"
   
   compress_and_upload_backup "$temp_dir" "$local_backup_path" "mysql/$backup_file.zip" || return 1
