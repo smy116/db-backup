@@ -12,7 +12,7 @@ log() {
 set_timezone() {
   if [ -n "$TZ" ]; then
     log "设置时区: $TZ"
-    cp /usr/share/zoneinfo/$TZ /etc/localtime
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
     echo "$TZ" > /etc/timezone
   fi
 }
