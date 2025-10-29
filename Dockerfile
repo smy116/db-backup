@@ -4,6 +4,15 @@ LABEL org.opencontainers.image.source=https://github.com/smy116/db-backup
 LABEL org.opencontainers.image.description="数据库定时备份容器，支持PostgreSQL、MySQL"
 LABEL org.opencontainers.image.licenses="MIT"
 
+# 添加 PostgreSQL 官方源
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/postgresql.list
+
 # 安装必要的软件包
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
@@ -12,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     tzdata \
     cron \
-    ca-certificates \
     rclone \
     locales \
     && apt-get clean \
