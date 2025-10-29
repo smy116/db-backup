@@ -30,8 +30,10 @@ chmod +x /app/backup.sh
 
 # 写入新的crontab配置
 log "设置Cron计划: $CRON_SCHEDULE"
-echo "$CRON_SCHEDULE /app/backup.sh >> /var/log/cron.log 2>&1" > /etc/cron.d/db-backup
+echo "$CRON_SCHEDULE root /app/backup.sh >> /var/log/cron.log 2>&1" > /etc/cron.d/db-backup
 chmod 0644 /etc/cron.d/db-backup
+# Debian cron 需要换行符结尾
+echo "" >> /etc/cron.d/db-backup
 
 # 打印环境变量配置信息
 log "---------------------------------------"
@@ -48,14 +50,14 @@ touch /var/log/cron.log
 
 # 启动cron服务
 log "启动cron服务..."
-crond -f &
+cron &
 
 # 等待cron服务启动
 log "等待cron服务稳定..."
-sleep 2 # 给crond一点时间来启动或失败
+sleep 2 # 给cron一点时间来启动或失败
 
 # 检查cron服务是否正在运行
-if ! pgrep crond > /dev/null; then
+if ! pgrep cron > /dev/null; then
   log "错误：cron服务未能启动或已意外退出。计划备份将无法运行。"
   exit 1 # 退出容器，因为核心功能已失败
 else

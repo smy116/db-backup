@@ -1,29 +1,34 @@
-FROM alpine:3.22
+FROM debian:trixie
 
 LABEL org.opencontainers.image.source=https://github.com/smy116/db-backup
 LABEL org.opencontainers.image.description="数据库定时备份容器，支持PostgreSQL、MySQL"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # 安装必要的软件包
-RUN apk update && apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
-    mysql-client \
+    mariadb-client \
     zip \
     unzip \
     tzdata \
-    dcron \
+    cron \
     ca-certificates \
-    rclone
-
-# 设置默认时区
-ENV TZ="Asia/Shanghai"
-RUN cp /usr/share/zoneinfo/${TZ} /etc/localtime \
-    && echo "${TZ}" > /etc/timezone
+    rclone \
+    locales \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # 设置本地化环境为中文
+RUN sed -i '/zh_CN.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen zh_CN.UTF-8
 ENV LANG=zh_CN.UTF-8
 ENV LANGUAGE=zh_CN:zh
 ENV LC_ALL=zh_CN.UTF-8
+
+# 设置默认时区
+ENV TZ="Asia/Shanghai"
+RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && echo "${TZ}" > /etc/timezone
 
 # 创建应用目录和备份目录
 RUN mkdir -p /app /backup /backup/pg /backup/mysql
