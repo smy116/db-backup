@@ -85,6 +85,46 @@ log() {
   echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1"
 }
 
+# 创建并注册临时目录
+# 参数 $1: 临时目录前缀
+# 返回: 创建的临时目录路径
+create_temp_dir() {
+  local prefix=$1
+  local temp_dir
+  temp_dir=$(mktemp -d -p "/tmp" "${prefix}_XXXXXX")
+  
+  # 为trap清理注册
+  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
+    TEMP_ITEMS_TO_CLEAN="$temp_dir"
+  else
+    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$temp_dir")
+  fi
+  
+  log "信息：已创建临时目录: $temp_dir"
+  echo "$temp_dir"
+}
+
+# 检查命令是否存在并记录版本
+# 参数 $1: 命令名称
+# 参数 $2: 是否必需 (true/false)
+check_command() {
+  local cmd=$1
+  local required=$2
+  
+  if command -v "$cmd" >/dev/null 2>&1; then
+    log "信息：$cmd 版本: $("$cmd" --version 2>/dev/null | head -n 1 || echo '版本信息解析失败')"
+    return 0
+  else
+    if [ "$required" = "true" ]; then
+      log "错误：$cmd 命令未找到，这是必需的依赖项。"
+      return 1
+    else
+      log "警告：$cmd 命令未找到。"
+      return 0
+    fi
+  fi
+}
+
 # 检查加密配置: 如果启用了加密但未提供密码，则报错并退出。
 check_encryption_config() {
   if [ "$ENABLE_ENCRYPTION" = "true" ] && [ -z "$ENCRYPTION_PASSWORD" ]; then
@@ -248,41 +288,21 @@ cleanup_old_backups() {
 
 # --- PostgreSQL特定备份函数 ---
 backup_postgresql() {
-  # 如果禁用了PostgreSQL备份，则记录信息并退出函数
-  if [ "$ENABLE_PG" != "true" ]; then
-    log "PostgreSQL备份已禁用 (ENABLE_PG != true)"
-    return 0 # 并非错误，按预期跳过
-  fi
+  [ "$ENABLE_PG" != "true" ] && { log "PostgreSQL备份已禁用"; return 0; }
   
   log "开始备份PostgreSQL数据库..."
   
-  # 确保PostgreSQL的本地备份目录存在 (例如 /backup/pg)
   check_backup_dir "/backup/pg"
-  
-  # 创建一个唯一的临时目录来存储数据库转储文件
   local temp_dir
-  temp_dir=$(mktemp -d -p "/tmp" "pg_backup.XXXXXX") # 在/tmp下创建，避免填满/backup
-  # 为trap清理注册 (POSIX兼容方式)
-  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
-    TEMP_ITEMS_TO_CLEAN="$temp_dir"
-  else
-    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$temp_dir")
-  fi
-  log "信息：已为PostgreSQL创建临时目录: $temp_dir"
+  temp_dir=$(create_temp_dir "pg_backup")
   local date_suffix
   date_suffix=$(date +"%Y%m%d_%H%M%S")
   local backup_file="pg_backup_$date_suffix" # 基础文件名，例如 pg_backup_20231027_103000
   local local_backup_path="$temp_dir/$backup_file.zip" # 压缩后的本地备份文件路径
   
-  # 检查PostgreSQL密码是否已设置，密码是必需的
-  if [ -z "$PG_PASSWORD" ]; then
-    log "错误：PostgreSQL备份已启用但未提供密码 (PG_PASSWORD)。关键错误，退出脚本。"
-    exit 1 # 密码缺失是关键错误，终止整个脚本
-  fi
-  # 将PG_PASSWORD导出为环境变量，pg_dump和psql会自动使用它
-
+  # 检查PostgreSQL密码
+  [ -z "$PG_PASSWORD" ] && { log "错误：PostgreSQL备份已启用但未提供密码。"; exit 1; }
   export PGPASSWORD=$PG_PASSWORD
-  log "信息：已为pg_dump/psql设置PGPASSWORD。"
   
   # --- 获取数据库列表 ---
   local db_list_retrieved_successfully=0 # 标记数据库列表是否成功获取
@@ -366,58 +386,37 @@ backup_postgresql() {
     return 1 # 没有文件可备份，视为失败
   fi
 
-  # --- 压缩和上传 ---
-  log "所有选定的PostgreSQL数据库均已成功转储。开始压缩和上传..."
-  if ! compress_and_upload_backup "$temp_dir" "$local_backup_path" "pg/$backup_file.zip"; then
-    log "错误: PostgreSQL备份压缩或上传失败 (目标: pg/$backup_file.zip)。"
-    # temp_dir 由 compress_and_upload_backup 在成功或失败时清理
-    return 1 # 压缩或上传失败，视为PostgreSQL备份过程的错误
-  fi
-  log "PostgreSQL备份压缩并成功上传到: pg/$backup_file.zip"
+# 压缩和上传
+  log "开始压缩和上传PostgreSQL备份..."
+  compress_and_upload_backup "$temp_dir" "$local_backup_path" "pg/$backup_file.zip" || {
+    log "错误：PostgreSQL备份压缩或上传失败。"
+    return 1
+  }
+  log "PostgreSQL备份已成功上传到: pg/$backup_file.zip"
   
-  # --- 清理旧备份 ---
-  # 注意: 清理失败本身不应导致整个备份任务失败。
-  if ! cleanup_old_backups "/backup/pg"; then
-    log "警告: 清理旧的PostgreSQL备份失败。但这不会影响当前备份的成功状态。"
-    # 不返回1，因为备份和上传本身是成功的
-  fi
+  # 清理旧备份（失败不影响整体状态）
+  cleanup_old_backups "/backup/pg" || log "警告：清理旧的PostgreSQL备份失败。"
   
-  log "PostgreSQL数据库备份过程成功完成。"
-  return 0 # PostgreSQL备份全部成功
+  log "PostgreSQL数据库备份完成。"
+  return 0
 }
 
 # --- MySQL/MariaDB特定备份函数 ---
 backup_mysql() {
-  # 如果禁用了MySQL备份，则记录信息并退出函数
-  if [ "$ENABLE_MYSQL" != "true" ]; then
-    log "MySQL/MariaDB备份已禁用 (ENABLE_MYSQL != true)"
-    return 0 # 并非错误，按预期跳过
-  fi
+  [ "$ENABLE_MYSQL" != "true" ] && { log "MySQL/MariaDB备份已禁用"; return 0; }
   
   log "开始备份MySQL/MariaDB数据库..."
   
-  # 确保MySQL的本地备份目录存在 (例如 /backup/mysql)
   check_backup_dir "/backup/mysql"
-  # 创建一个唯一的临时目录来存储数据库转储文件和临时配置文件
   local temp_dir
-  temp_dir=$(mktemp -d -p "/tmp" "mysql_backup.XXXXXX") # 在/tmp下创建
-  # 为trap清理注册 (POSIX兼容方式)
-  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
-    TEMP_ITEMS_TO_CLEAN="$temp_dir"
-  else
-    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$temp_dir")
-  fi
-  log "信息：已为MySQL/MariaDB创建临时目录: $temp_dir"
+  temp_dir=$(create_temp_dir "mysql_backup")
   local date_suffix
   date_suffix=$(date +"%Y%m%d_%H%M%S")
   local backup_file="mysql_backup_$date_suffix" # 基础文件名
   local local_backup_path="$temp_dir/$backup_file.zip" # 压缩后的本地备份文件路径
   
-  # 检查MySQL密码是否已设置，密码是必需的
-  if [ -z "$MYSQL_PASSWORD" ]; then
-    log "错误：MySQL/MariaDB备份已启用但未提供密码 (MYSQL_PASSWORD)。关键错误，退出脚本。"
-    exit 1 # 密码缺失是关键错误，终止整个脚本
-  fi
+  # 检查MySQL密码
+  [ -z "$MYSQL_PASSWORD" ] && { log "错误：MySQL/MariaDB备份已启用但未提供密码。"; exit 1; }
   
   # 为MySQL客户端命令创建一个临时的my.cnf配置文件，包含连接参数和密码。
   # 这避免了在命令行中直接暴露密码，并允许统一配置。
@@ -556,22 +555,19 @@ EOF
     return 1 # 没有文件可备份，视为失败
   fi
   
-  # --- 压缩和上传 ---
-  log "所有选定的MySQL/MariaDB数据库均已成功转储。开始压缩和上传..."
-  if ! compress_and_upload_backup "$temp_dir" "$local_backup_path" "mysql/$backup_file.zip"; then
-    log "错误: MySQL/MariaDB备份压缩或上传失败 (目标: mysql/$backup_file.zip)。"
-    # temp_dir 由 compress_and_upload_backup 在成功或失败时清理
-    return 1 # 压缩或上传失败，视为MySQL备份过程的错误
-  fi
-  log "MySQL/MariaDB备份压缩并成功上传到: mysql/$backup_file.zip"
+# 压缩和上传
+  log "开始压缩和上传MySQL/MariaDB备份..."
+  compress_and_upload_backup "$temp_dir" "$local_backup_path" "mysql/$backup_file.zip" || {
+    log "错误：MySQL/MariaDB备份压缩或上传失败。"
+    return 1
+  }
+  log "MySQL/MariaDB备份已成功上传到: mysql/$backup_file.zip"
 
-  # --- 清理旧备份 ---
-  if ! cleanup_old_backups "/backup/mysql"; then
-    log "警告: 清理旧的MySQL/MariaDB备份失败。但这不会影响当前备份的成功状态。"
-  fi
+  # 清理旧备份（失败不影响整体状态）
+  cleanup_old_backups "/backup/mysql" || log "警告：清理旧的MySQL/MariaDB备份失败。"
   
-  log "MySQL/MariaDB数据库备份过程成功完成。"
-  return 0 # MySQL备份全部成功
+  log "MySQL/MariaDB数据库备份完成。"
+  return 0
 }
 
 # --- 主逻辑执行函数 ---
@@ -583,81 +579,39 @@ main() {
   SCRIPT_HAS_ERRORS=0
   log "信息：数据库备份脚本已启动。" # 从 "数据库备份脚本开始执行..." 更改以保持一致性
 
-  # --- 记录工具版本 ---
+  # --- 检查核心工具 ---
   log "--- 核心工具版本信息 ---"
-  if command -v rclone >/dev/null 2>&1; then
-    log "Rclone 版本: $(rclone --version | head -n 1)"
-  else
-    log "错误：rclone 命令未找到。Rclone是核心依赖项，脚本无法正确运行。"
-    SCRIPT_HAS_ERRORS=1 # rclone至关重要
-  fi
-  if command -v zip >/dev/null 2>&1; then
-    # zip -v 的输出是多行的，第一行是 "Zip ... by Info-ZIP"，第二行是 "Zip ... version ..."
-    # 然而，如果可用，简单的 "zip --version" 更标准，或者使用 "zip -v" 并解析。
-    # 我们尝试获取一个简洁的版本。Zip的版本输出可能比较棘手。
-    # Info-ZIP的`zip`的一个常见模式是`zip -h`获取包含版本的帮助信息，或`zip -v`获取详细版本。
-    # 我们假设`zip --version`可能有效，或者使用已知的`zip -v`解析方式。
-    # 后备方案：`zip -v | head -n 1` 可能会给出 "Copyright (c) 1990-2008 Info-ZIP..."
-    # `zip -v | grep "Info-ZIP"` 也是一个选项。
-    # 目前，我们使用一种常用方法从 zip -v 获取版本行
-    log "信息：Zip 版本: $(zip -v | head -n 2 | grep 'Zip' || echo '版本信息解析失败')"
-  else
-    log "错误：zip 命令未找到。Zip是核心依赖项，脚本无法正确运行。"
-    SCRIPT_HAS_ERRORS=1 # zip至关重要
-  fi
-  if command -v unzip >/dev/null 2>&1; then
-    log "信息：Unzip 版本: $(unzip -v | head -n 1 | awk '{print $2}' || echo '版本信息解析失败')" # 通常是 "UnZip X.Y ..."
-  else
-    log "警告：unzip 命令未找到。(对此脚本的直接操作不关键)"
-    # 此脚本不直接使用unzip，但了解环境信息有好处。
-  fi
-
+  
+  # 检查必需的核心工具
+  check_command rclone true || SCRIPT_HAS_ERRORS=1
+  check_command zip true || SCRIPT_HAS_ERRORS=1
+  check_command unzip false
+  
+  # 检查数据库工具
   if [ "$ENABLE_PG" = "true" ]; then
-    if command -v pg_dump >/dev/null 2>&1; then
-      log "信息：pg_dump 版本: $(pg_dump --version)"
-    else
-      log "错误：pg_dump 命令未找到，但已启用PostgreSQL备份 (ENABLE_PG=true)。"
-      SCRIPT_HAS_ERRORS=1 # 如果启用了PG，这是一个严重问题
-    fi
+    check_command pg_dump true || SCRIPT_HAS_ERRORS=1
   fi
-
+  
   if [ "$ENABLE_MYSQL" = "true" ]; then
-    if command -v mysqldump >/dev/null 2>&1; then
-      log "信息：mysqldump 版本: $(mysqldump --version)"
-    else
-      log "警告：mysqldump 命令未找到。如果mariadb-dump也找不到，MySQL/MariaDB备份将失败。"
-      # 尚不设置SCRIPT_HAS_ERRORS，因为mariadb-dump可能是主要的
-    fi
-    if command -v mariadb-dump >/dev/null 2>&1; then
-      log "信息：mariadb-dump 版本: $(mariadb-dump --version)"
-    else
-      log "警告：mariadb-dump 命令未找到。如果mysqldump也找不到，MySQL/MariaDB备份将失败。"
-      # 如果mysqldump也未找到，则这是一个错误。
-      if ! command -v mysqldump >/dev/null 2>&1; then
-        log "错误：mysqldump 和 mariadb-dump 命令均未找到，但已启用MySQL/MariaDB备份 (ENABLE_MYSQL=true)。"
-        SCRIPT_HAS_ERRORS=1 # 两者都缺失，对MySQL备份至关重要
-      fi
-    fi
-    # 确保在启用MYSQL时至少有一个转储工具可用
-    if ! command -v mysqldump >/dev/null 2>&1 && ! command -v mariadb-dump >/dev/null 2>&1; then
-        log "错误：已启用MySQL/MariaDB备份，但 'mysqldump' 和 'mariadb-dump' 均未找到。"
-        SCRIPT_HAS_ERRORS=1
+    local mysql_tools_available=false
+    check_command mysqldump false && mysql_tools_available=true
+    check_command mariadb-dump false && mysql_tools_available=true
+    
+    if [ "$mysql_tools_available" = "false" ]; then
+      log "错误：已启用MySQL/MariaDB备份，但未找到 'mysqldump' 或 'mariadb-dump'。"
+      SCRIPT_HAS_ERRORS=1
     fi
   fi
   log "---------------------------"
 
-  # 确保顶层 /backup 目录存在
+  # 确保备份目录存在
   check_backup_dir "/backup"
   
-  log "信息：配置的备份保留天数: $RETENTION_DAYS 天。"
+  log "信息：备份保留天数: $RETENTION_DAYS 天。"
   
-  # 验证加密相关的环境变量设置
-  check_encryption_config # 如果加密启用但密码缺失，此函数将使脚本退出
-  if [ "$ENABLE_ENCRYPTION" = "true" ]; then
-    log "信息：备份加密已启用 (ENABLE_ENCRYPTION=true)。"
-  else
-    log "信息：备份加密未启用 (ENABLE_ENCRYPTION=false)。"
-  fi
+  # 验证加密配置
+  check_encryption_config
+  log "信息：备份加密: $([ "$ENABLE_ENCRYPTION" = "true" ] && echo "已启用" || echo "未启用")"
   
   # 设置并验证rclone配置。
   # 如果 configure_rclone 失败 (例如，无法连接到远程存储)，
@@ -671,41 +625,35 @@ main() {
   fi
   
   # --- 执行各数据库类型的备份 ---
-  # 仅当相应的ENABLE_ flag为 "true" 时才执行备份。
-  
-  # PostgreSQL 备份
+  # 执行PostgreSQL备份
   if [ "$ENABLE_PG" = "true" ]; then
     log "信息：开始执行PostgreSQL备份流程..."
-    if ! backup_postgresql; then
-      log "错误：PostgreSQL备份流程报告了错误。详情请查看之前的日志。"
-      SCRIPT_HAS_ERRORS=1 # 标记脚本执行中发生错误
-    else
-      log "信息：PostgreSQL备份流程成功完成。"
-    fi
+    backup_postgresql || {
+      log "错误：PostgreSQL备份流程失败。"
+      SCRIPT_HAS_ERRORS=1
+    }
   else
-    log "信息：已跳过PostgreSQL备份 (ENABLE_PG 非 'true')。"
+    log "信息：已跳过PostgreSQL备份。"
   fi
 
-  # MySQL/MariaDB 备份
+  # 执行MySQL/MariaDB备份
   if [ "$ENABLE_MYSQL" = "true" ]; then
     log "信息：开始执行MySQL/MariaDB备份流程..."
-    if ! backup_mysql; then
-      log "错误：MySQL/MariaDB备份流程报告了错误。详情请查看之前的日志。"
-      SCRIPT_HAS_ERRORS=1 # 标记脚本执行中发生错误
-    else
-      log "信息：MySQL/MariaDB备份流程成功完成。"
-    fi
+    backup_mysql || {
+      log "错误：MySQL/MariaDB备份流程失败。"
+      SCRIPT_HAS_ERRORS=1
+    }
   else
-    log "信息：已跳过MySQL/MariaDB备份 (ENABLE_MYSQL 非 'true')。"
+    log "信息：已跳过MySQL/MariaDB备份。"
   fi
   
   # --- 最终退出状态 ---
   if [ "$SCRIPT_HAS_ERRORS" -ne 0 ]; then
-    log "错误：数据库备份脚本执行完成，但出现了一个或多个错误。请检查日志以获取详细信息。"
-    exit 1 # 以错误状态码退出
+    log "错误：数据库备份脚本执行完成，但出现错误。"
+    exit 1
   else
     log "信息：所有启用的数据库备份任务均已成功完成！"
-    exit 0 # 以成功状态码退出
+    exit 0
   fi
 }
 
