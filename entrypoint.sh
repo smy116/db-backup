@@ -31,7 +31,37 @@ chmod +x /app/backup.sh
 # 写入新的crontab配置
 log "设置Cron计划: $CRON_SCHEDULE"
 # Debian cron 需要完整的路径和正确的格式
+# 在 crontab 中声明所有环境变量，确保 backup.sh 可以访问
 cat > /etc/cron.d/db-backup << EOF
+# 环境变量配置
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+TZ=${TZ:-Asia/Shanghai}
+
+# 备份配置环境变量
+CRON_SCHEDULE=${CRON_SCHEDULE}
+ENABLE_PG=${ENABLE_PG:-false}
+ENABLE_MYSQL=${ENABLE_MYSQL:-false}
+RCLONE_CONFIG_PATH=${RCLONE_CONFIG_PATH:-/backup/rclone.conf}
+RETENTION_DAYS=${RETENTION_DAYS:-30}
+ENABLE_ENCRYPTION=${ENABLE_ENCRYPTION:-false}
+ENCRYPTION_PASSWORD=${ENCRYPTION_PASSWORD:-}
+
+# PostgreSQL 配置
+PG_HOST=${PG_HOST:-localhost}
+PG_PORT=${PG_PORT:-5432}
+PG_USER=${PG_USER:-postgres}
+PG_PASSWORD=${PG_PASSWORD:-}
+PG_DATABASES=${PG_DATABASES:-all}
+
+# MySQL 配置
+MYSQL_HOST=${MYSQL_HOST:-localhost}
+MYSQL_PORT=${MYSQL_PORT:-3306}
+MYSQL_USER=${MYSQL_USER:-root}
+MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
+MYSQL_DATABASES=${MYSQL_DATABASES:-all}
+
+# 定时任务
 $CRON_SCHEDULE root /app/backup.sh >> /var/log/cron.log 2>&1
 
 EOF
