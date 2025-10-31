@@ -5,6 +5,21 @@
 # 初始化一个字符串，用于存储需要清理的临时文件/目录的路径，以换行符分隔
 TEMP_ITEMS_TO_CLEAN=""
 
+# 将路径注册到退出时的清理列表，避免重复逻辑
+register_temp_item() {
+  local item=$1
+
+  if [ -z "$item" ]; then
+    return
+  fi
+
+  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
+    TEMP_ITEMS_TO_CLEAN="$item"
+  else
+    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$item")
+  fi
+}
+
 # 脚本退出时执行的清理函数
 cleanup_on_exit() {
   local exit_code=$? # 捕获脚本的退出码
@@ -12,25 +27,20 @@ cleanup_on_exit() {
   
   # POSIX兼容的循环，用于处理以换行符分隔的字符串
   if [ -n "$TEMP_ITEMS_TO_CLEAN" ]; then
-    _old_ifs="$IFS" # 保存当前IFS
-    # shellcheck disable=SC2034 # IFS is used by read in the while loop below
-    IFS='
-' # 将IFS设置为空格和换行符，以便正确分割字符串
-    
+    local old_ifs=$IFS # 保存当前IFS
+    # shellcheck disable=SC2034 # IFS在下面的循环中通过read使用
+    IFS=$(printf '\n')
+
     # 使用printf将字符串提供给while read循环
     # 这能正确处理路径中的特殊字符
     printf "%s\n" "$TEMP_ITEMS_TO_CLEAN" | while IFS= read -r item; do
-      # 确保item不为空，如果TEMP_ITEMS_TO_CLEAN有前导/尾随换行符，则可能发生这种情况
-      # （尽管建议的添加逻辑应能防止这种情况）
-      if [ -n "$item" ]; then 
-        if [ -e "$item" ]; then # 检查文件/目录是否存在
-          # 日志消息已翻译："信息：正在移除临时项: $item"
-          log "信息：正在移除临时项: $item"
-          rm -rf "$item"
-        fi
+      # 确保item不为空，并且目标仍然存在
+      if [ -n "$item" ] && [ -e "$item" ]; then
+        log "信息：正在移除临时项: $item"
+        rm -rf "$item"
       fi
     done
-    IFS="$_old_ifs" # 恢复IFS
+    IFS=$old_ifs # 恢复IFS
   fi
   
   log "信息：清理完成。"
@@ -118,8 +128,7 @@ EOF
   # 测试rclone是否能够访问名为 "backup:" 的远程存储
   # --no-check-certificate: 忽略SSL证书检查，便于使用自签名证书等情况
   log "测试backup存储系统连接..."
-  rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate lsd backup:
-  if [ $? -ne 0 ]; then
+  if ! rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate lsd backup:; then
     log "错误: 无法连接到backup存储系统，请检查rclone配置 (路径: $RCLONE_CONFIG_PATH)"
     return 1 # rclone配置测试失败，返回错误码
   fi
@@ -149,8 +158,7 @@ upload_with_rclone() {
   
   # ${remote_path%/*} 用于提取远程路径中的目录部分 (例如 "pg/")
   log "上传文件到backup存储: $local_file -> backup:${remote_path%/*}/"
-  rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate copy "$local_file" "backup:${remote_path%/*}/"
-  if [ $? -ne 0 ]; then
+  if ! rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate copy "$local_file" "backup:${remote_path%/*}/"; then
     log "上传文件失败: $local_file"
     return 1 # 上传失败，返回错误码
   fi
@@ -174,8 +182,14 @@ compress_and_upload_backup() {
   local remote_path=$3          # 例如 pg/pg_backup_YYYYMMDD_HHMMSS.zip
 
   # 切换到临时目录进行压缩，这样zip包内的文件路径是相对的
-  cd "$temp_dir" || { log "错误: 无法进入临时目录 $temp_dir"; return 1; }
-  
+  local previous_dir
+  previous_dir=$(pwd)
+
+  if ! cd "$temp_dir"; then
+    log "错误: 无法进入临时目录 $temp_dir"
+    return 1
+  fi
+
   local zip_file_name
   zip_file_name=$(basename "$local_backup_path") # 提取zip文件名用于日志
 
@@ -186,6 +200,7 @@ compress_and_upload_backup() {
     if ! zip -q -r -e -P "$ENCRYPTION_PASSWORD" "$local_backup_path" .; then
       log "错误: 加密压缩 $zip_file_name 失败。"
       rm -rf "$temp_dir" # 清理临时目录
+      cd "$previous_dir" || true
       return 1 # 压缩失败，返回错误码
     fi
     log "备份文件已加密压缩: $local_backup_path"
@@ -195,6 +210,7 @@ compress_and_upload_backup() {
     if ! zip -q -r "$local_backup_path" .; then
       log "错误: 压缩 $zip_file_name 失败。"
       rm -rf "$temp_dir" # 清理临时目录
+      cd "$previous_dir" || true
       return 1 # 压缩失败，返回错误码
     fi
     log "备份文件已压缩: $local_backup_path"
@@ -206,14 +222,16 @@ compress_and_upload_backup() {
     # upload_with_rclone 成功后会删除 $local_backup_path。
     # 如果上传失败，该文件可能仍然存在。无论如何，都需要清理整个 $temp_dir。
     rm -rf "$temp_dir"
+    cd "$previous_dir" || true
     return 1 # 上传失败，返回错误码
   fi
-  
+
   # $local_backup_path (即 $temp_dir/$zip_file_name) 已被 upload_with_rclone 删除。
   # 此处清理 $temp_dir 是为了删除原始的转储文件 (如 .sql 或 .dump 文件)。
   rm -rf "$temp_dir"
+  cd "$previous_dir" || true
   log "已清理临时工作目录: $temp_dir (包含原始转储文件)"
-  
+
   return 0 # 压缩和上传均成功
 }
 
@@ -231,14 +249,8 @@ cleanup_old_backups() {
   log "清理backup存储中超过 ${RETENTION_DAYS} 天的备份文件 (路径前缀: $prefix/)"
   
   # 使用 rclone delete --min-age 删除早于 RETENTION_DAYS 的文件
-  # set +e / set -e: 临时禁用 "exit on error"，以便捕获rclone的退出码并自定义处理。
-  set +e 
-  rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate delete --min-age "${RETENTION_DAYS}d" "backup:${prefix}/"
-  local rclone_exit_code=$?
-  set -e 
-
-  if [ $rclone_exit_code -ne 0 ]; then
-    log "错误: 清理backup存储中的过期备份失败 (命令退出码: $rclone_exit_code)。路径: backup:${prefix}/"
+  if ! rclone --config "$RCLONE_CONFIG_PATH" --no-check-certificate delete --min-age "${RETENTION_DAYS}d" "backup:${prefix}/"; then
+    log "错误: 清理backup存储中的过期备份失败。路径: backup:${prefix}/"
     return 1 # 清理失败，返回错误码
   fi
   
@@ -263,11 +275,7 @@ backup_postgresql() {
   local temp_dir
   temp_dir=$(mktemp -d -p "/tmp" "pg_backup.XXXXXX") # 在/tmp下创建，避免填满/backup
   # 为trap清理注册 (POSIX兼容方式)
-  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
-    TEMP_ITEMS_TO_CLEAN="$temp_dir"
-  else
-    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$temp_dir")
-  fi
+  register_temp_item "$temp_dir"
   log "信息：已为PostgreSQL创建临时目录: $temp_dir"
   local date_suffix
   date_suffix=$(date +"%Y%m%d_%H%M%S")
@@ -328,6 +336,7 @@ backup_postgresql() {
   
   # --- 执行数据库备份 ---
   local overall_dump_success=1 # 标记所有数据库是否都成功转储 (1=成功, 0=失败)
+  local globals_dump_success=1 # 标记全局对象是否成功转储 (1=成功, 0=失败)
   log "开始逐个备份以下PostgreSQL数据库: $db_list"
   for db in $db_list; do
     # 跳过列表中的空项 (如果输入有误，例如 "db1, ,db2")
@@ -348,19 +357,44 @@ backup_postgresql() {
       log "PostgreSQL数据库 '$db' 备份成功: $temp_dir/${db}.dump"
     fi
   done
-  
+
+  # 备份PostgreSQL全局对象（角色、权限等），确保恢复时保留用户配置
+  local globals_dump_file="$temp_dir/postgresql_globals.sql"
+  log "开始备份PostgreSQL全局角色和权限配置到 $globals_dump_file ..."
+  if pg_dumpall -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" --globals-only > "$globals_dump_file" 2>"$globals_dump_file.log"; then
+    if [ -s "$globals_dump_file" ]; then
+      log "PostgreSQL全局角色和权限配置备份成功: $globals_dump_file"
+      rm -f "$globals_dump_file.log"
+    else
+      log "警告: PostgreSQL全局角色和权限备份文件为空: $globals_dump_file"
+      rm -f "$globals_dump_file.log"
+    fi
+  else
+    log "错误: 备份PostgreSQL全局角色和权限配置失败。错误信息如下:"
+    if [ -f "$globals_dump_file.log" ]; then
+      cat "$globals_dump_file.log"
+    fi
+    globals_dump_success=0
+    rm -f "$globals_dump_file" "$globals_dump_file.log"
+  fi
+
   # 清理 PGPASSWORD 环境变量，避免其在后续命令中意外使用
   export PGPASSWORD=""
 
   # 如果任何一个数据库转储失败，则报告错误并中止此备份类型
-  if [ $overall_dump_success -eq 0 ]; then
-    log "错误: 一个或多个PostgreSQL数据库备份失败。请查看之前的错误日志。"
+  if [ $overall_dump_success -eq 0 ] || [ $globals_dump_success -eq 0 ]; then
+    if [ $overall_dump_success -eq 0 ]; then
+      log "错误: 一个或多个PostgreSQL数据库备份失败。请查看之前的错误日志。"
+    fi
+    if [ $globals_dump_success -eq 0 ]; then
+      log "错误: PostgreSQL全局角色和权限配置备份失败。"
+    fi
     rm -rf "$temp_dir" # 清理可能包含部分成功转储的临时目录
     return 1 # 指示PostgreSQL备份过程有错误
   fi
 
   # 检查是否有任何转储文件实际生成 (例如，如果列表是空的或所有db都无效)
-  if [ -z "$(ls -A "$temp_dir" | grep '\.dump$')" ]; then
+  if [ -z "$(find "$temp_dir" -maxdepth 1 -type f -name '*.dump' -print -quit)" ]; then
     log "警告: 在 '$temp_dir' 中没有找到成功的PostgreSQL数据库转储文件 (.dump)。可能是数据库列表为空或所有指定数据库均无法访问。"
     rm -rf "$temp_dir"
     return 1 # 没有文件可备份，视为失败
@@ -401,12 +435,7 @@ backup_mysql() {
   # 创建一个唯一的临时目录来存储数据库转储文件和临时配置文件
   local temp_dir
   temp_dir=$(mktemp -d -p "/tmp" "mysql_backup.XXXXXX") # 在/tmp下创建
-  # 为trap清理注册 (POSIX兼容方式)
-  if [ -z "$TEMP_ITEMS_TO_CLEAN" ]; then
-    TEMP_ITEMS_TO_CLEAN="$temp_dir"
-  else
-    TEMP_ITEMS_TO_CLEAN=$(printf "%s\n%s" "$TEMP_ITEMS_TO_CLEAN" "$temp_dir")
-  fi
+  register_temp_item "$temp_dir"
   log "信息：已为MySQL/MariaDB创建临时目录: $temp_dir"
   local date_suffix
   date_suffix=$(date +"%Y%m%d_%H%M%S")
@@ -550,7 +579,7 @@ EOF
   fi
   
   # 检查是否有任何 .sql 转储文件实际生成
-  if [ -z "$(ls -A "$temp_dir" | grep '\.sql$')" ]; then
+  if [ -z "$(find "$temp_dir" -maxdepth 1 -type f -name '*.sql' -print -quit)" ]; then
     log "警告: 在 '$temp_dir' 中没有找到成功的MySQL/MariaDB数据库转储文件 (.sql)。可能是数据库列表为空或所有指定数据库均无法访问。"
     rm -rf "$temp_dir"
     return 1 # 没有文件可备份，视为失败
